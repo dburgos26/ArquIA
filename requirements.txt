@@ -12,3 +12,4 @@ pydantic
 streamlit
 wikipedia
 ipython
+python-multipart
