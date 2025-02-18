@@ -226,7 +226,9 @@ def make_supervisor_node(llm: BaseChatModel, members: list[str]) -> str:
 
 memory = MemorySaver()
 
-llm = ChatVertexAI(model_name="gemini-1.5-flash-002")
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o")
 
 builder = StateGraph(MessagesState)
 

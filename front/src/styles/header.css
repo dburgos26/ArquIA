@@ -1,0 +1,19 @@
+.app-bar {
+    background: rgb(26, 26, 26) ;
+}
+  
+.menu-button {
+    color: rgb(255, 255, 255); 
+    margin: 16px;
+}
+  
+.chat-text {
+    color: rgb(97, 97, 97); 
+    margin: 20px;
+}
+  
+.title {
+    color: white; 
+    font-weight: bold;
+}
+  
