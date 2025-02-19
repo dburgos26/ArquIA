@@ -1,0 +1,11 @@
+langchain-google-vertexai
+langchain-core
+langgraph
+google-cloud-aiplatform
+google-cloud-storage
+google-cloud-dialogflow-cx
+langchain-community
+langchain-openai
+langchain-text-splitters
+typing-extensions
+pydantic
