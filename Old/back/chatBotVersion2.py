@@ -19,14 +19,14 @@ from google.cloud import aiplatform
 
 project_id = "tesisdbmarquia"
 location = "us-central1"
-endpoint_id = "454548002527248384"
-endpoint_id2 = "5809978870354411520"
+#endpoint_id = "454548002527248384"
+#endpoint_id2 = "5809978870354411520"
 
 aiplatform.init(project=project_id, location=location)
-endpoint = aiplatform.Endpoint(endpoint_id)
-endpoint2 = aiplatform.Endpoint(endpoint_id2)
+#endpoint = aiplatform.Endpoint(endpoint_id)
+#endpoint2 = aiplatform.Endpoint(endpoint_id2)
 
-members = ["creator",  "researcher", "extractor", "classifier"]
+members = ["creator",  "researcher", "extractor", "classifier", "validator"]
 options = members + ["FINISH"]
 
 class AgentState(MessagesState):
@@ -85,6 +85,15 @@ prompt_creator ="""You are an expert in creating xml code for software architect
 You are working with a researcher who will tell you exactly what you should do, please follow their instructions. Limit 
 yourself to load balancing and replication. You yourself are unable to create this diagrams, but you have a tool for
 this purpose named diagramCreator. Always use this tool  when the user asks for creation, modifications, or additions to the diagram"""
+
+prompt_validator = (
+    "Eres un experto en diseño e implementación de componentes de software. "
+    "Vas a recibir dos imágenes: una de un diagrama de clases (que muestra la implementación de un componente) "
+    "y otra de un diagrama de componentes (que muestra el contexto arquitectónico). "
+    "Tu tarea es analizar si la implementación presentada en el diagrama de clases está bien diseñada para favorecer atributos de calidad "
+    "como escalabilidad y desempeño principalmente, entre otros. "
+    "Proporciona un análisis detallado, señalando fortalezas, debilidades y posibles mejoras."
+)
 
 @tool
 def diagram_describer(image_path: str) -> str:
@@ -207,6 +216,43 @@ def classify(image_path: str) -> str:
 
     except Exception as e:
         return f"Error during classification: {str(e)}"
+    
+@tool
+def validate_component(class_diagram_path: str, component_diagram_path: str) -> str:
+    """
+    Esta tool recibe dos imágenes:
+      - class_diagram_path: imagen de un diagrama de clases que representa la implementación de un componente.
+      - component_diagram_path: imagen de un diagrama de componentes que muestra el contexto arquitectónico.
+    
+    La tarea es analizar si la implementación del componente (diagrama de clases) está diseñada de forma que favorezca
+    atributos de calidad (por ejemplo, escalabilidad, mantenibilidad, rendimiento, etc.). Se debe realizar un análisis
+    comparativo considerando el contexto provisto por el diagrama de componentes.
+    
+    Retorna una evaluación detallada que incluya puntos fuertes, posibles deficiencias y sugerencias de mejora.
+    """
+    try:
+        # Cargar las imágenes
+        class_image = Image.load_from_file(class_diagram_path)
+        component_image = Image.load_from_file(component_diagram_path)
+        
+        # Definir el prompt para el modelo generativo
+        prompt_text = (
+            "Analiza el siguiente par de diagramas: "
+            "1) Un diagrama de clases que representa la implementación de un componente, "
+            "y 2) Un diagrama de componentes que sitúa dicho componente en el contexto de la arquitectura. "
+            "Evalúa si la implementación del componente (diagrama de clases) está correctamente diseñada para favorecer "
+            "atributos de calidad como escalabilidad y desempeño principalmente, etc. "
+            "Proporciona una evaluación detallada señalando los aspectos positivos, las deficiencias y sugerencias de mejora."
+        )
+        
+        # Invocar el modelo generativo pasando ambos inputs (prompt y las imágenes)
+        generative_model = GenerativeModel("gemini-1.0-pro-vision")
+        response = generative_model.generate_content([prompt_text, class_image, component_image])
+        return response.text
+
+    except Exception as e:
+        return f"Error durante la validación: {str(e)}"
+
 
 
 
@@ -237,6 +283,7 @@ def make_supervisor_node(llm: BaseChatModel, members: list[str]) -> str:
         you must always first extract the elements of said diagram. If the user wants to create
         a diagram, you must always first research about the software architecture tactics that 
         will be implemented in the created diagram.
+        IMPORTANT IF YOU ARE ASKED ABOUT A CLASS DIAGRAM BASED ON A COMPONENTS DIAGRAM, USE THE VALIDATOR AGENT TOOL DONT USE ANY OTHER AGENT
         """
 
     )
@@ -317,6 +364,15 @@ def classify_node(state: AgentState) -> AgentState:
         ]
     }
 
+validator_agent = create_react_agent(llm, tools=[validate_component], state_modifier=make_system_prompt(prompt_validator))
+
+def validator_node(state: AgentState) -> AgentState:
+    result = validator_agent.invoke(state)
+    return {
+        "messages": [
+            HumanMessage(content=result["messages"][-1].content, name="validator")
+        ]
+    }
 
 #Node creation
 
@@ -327,6 +383,7 @@ builder.add_node("creator", creator_node)
 builder.add_node("researcher", researcher_node)
 builder.add_node("extractor", extraction_node)
 builder.add_node("classifier", classify_node)
+builder.add_node("validator", validator_node)
 builder.add_edge(START, "supervisor")
 builder.add_edge("supervisor", END)
 
@@ -341,6 +398,7 @@ builder.add_edge("extractor","describer")
 builder.add_conditional_edges("researcher", router, {"continue": "creator", END: END})
 builder.add_edge("creator", END)
 builder.add_edge("describer", END)
+builder.add_edge("validator", END)
 
 
 graph = builder.compile(checkpointer=memory)

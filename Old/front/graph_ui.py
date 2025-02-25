@@ -4,74 +4,79 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from back.chatBot import graph
-
+from back.chatBotVersion2 import graph
 from langchain_core.messages import HumanMessage
-import os
 from PIL import Image
 
 # Constants
 height = 600
 title = "MultiAgent Software Architecture Assistant"
-icon = ":robot"
+icon = ":robot:"
 config = {"configurable": {"thread_id": "2"}}
-file_path = None
 
-def generate_message(user_input, image_path):
-    global file_path
+def save_uploaded_file(uploaded_file, save_dir="data"):
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    file_path = os.path.join(save_dir, uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return file_path
 
-    if image_path:
-
-        for event in graph.stream({"messages": [user_input+image_path]}, config, stream_mode="values"):
+def generate_message(user_input, class_image_path=None, component_image_path=None):
+    # Si se tienen ambas imágenes, las incluimos en el payload
+    if class_image_path and component_image_path:
+        # El payload puede ser un diccionario que incluya tanto el mensaje como la ruta de ambas imágenes.
+        payload = {
+            "messages": [user_input, class_image_path, component_image_path]
+        }
+        # Usamos stream para enviar el payload
+        for event in graph.stream(payload, config, stream_mode="values"):
             event["messages"][-1].pretty_print()
             response = event["messages"][-1].content
         ai_messages = response
     else:
+        # Si no se cargaron las imágenes, se envía solo el mensaje de texto
         for event in graph.stream({"messages": [user_input]}, config, stream_mode="values"):
             print(event["messages"][-1])
             response = event["messages"][-1].content
         ai_messages = response
         
+    # Guardamos la conversación en el estado de sesión
     st.session_state.conversation.append({
         "user": user_input,
         "analyst": ai_messages,
-        "image_path": image_path
+        "class_image_path": class_image_path,
+        "component_image_path": component_image_path
     })
 
+    # Mostrar la conversación
     for entry in st.session_state.conversation:
         st.write(f"**You**: {entry['user']}")
-        if entry.get("image_path"):
-            st.image(entry["image_path"], caption="Uploaded Image", use_column_width=True)
+        if entry.get("class_image_path"):
+            st.image(entry["class_image_path"], caption="Diagrama de Clases", use_column_width=True)
+        if entry.get("component_image_path"):
+            st.image(entry["component_image_path"], caption="Diagrama de Componentes", use_column_width=True)
         st.write(f"**Analyst**: {entry['analyst']}")
-
-    file_path = None
-
 
 if "conversation" not in st.session_state:
     st.session_state.conversation = []
 
-
 st.set_page_config(page_title=title, page_icon=icon)
 st.header(title)
 
-uploaded_file = st.file_uploader("Choose a file", type=["jpg", "jpeg", "png"])
-if uploaded_file is not None:
-    save_dir = "data"
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+# Dos file uploaders: uno para el diagrama de clases y otro para el diagrama de componentes
+uploaded_file_class = st.file_uploader("Selecciona el diagrama de clases", type=["jpg", "jpeg", "png"], key="class")
+uploaded_file_component = st.file_uploader("Selecciona el diagrama de componentes", type=["jpg", "jpeg", "png"], key="component")
 
-    file_path = os.path.join(save_dir, uploaded_file.name)
+file_path_class = None
+file_path_component = None
 
+if uploaded_file_class is not None:
+    file_path_class = save_uploaded_file(uploaded_file_class)
 
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+if uploaded_file_component is not None:
+    file_path_component = save_uploaded_file(uploaded_file_component)
 
-if prompt := st.chat_input("Enter Prompt.."):
-   
-    if file_path:
-        generate_message(prompt, image_path=file_path)
-    else:
-        generate_message(prompt, image_path=None)
-
-
-
+# Input de texto para el prompt
+if prompt := st.chat_input("Enter Prompt..."):
+    generate_message(prompt, class_image_path=file_path_class, component_image_path=file_path_component)
