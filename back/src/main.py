@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import FastAPI, Request, Form, File, UploadFile
+from fastapi import FastAPI, Form, File, UploadFile
 from src.graph import graph
 import os
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,15 +31,20 @@ async def message(message: str = Form(...), file: Optional[UploadFile] = File(No
             image_file.write(content)
 
     # Prepare the input for the graph
-    user_input = message + " " + image_path if image_path else message
-    response = graph.invoke({"messages": [user_input]}, config)
+    response = graph.invoke({
+        "messages": [{"role": "user", "content": message}],
+        "userQuestion": message,
+        "localQuestion": "",
+        "hasVisitedInvestigator": False,
+        "hasVisitedDiagrams": False,
+        "hasVisitedCreator": False,
+        "hasVisitedEvaluator": False,
+        "nextNode": "supervisor",
+        "imagePath": image_path,
+        "endMessage": ""
+    }, config)
 
-    print("--------------------")
-    for m in response["messages"]:
-        m.pretty_print()
-    print("--------------------")
-
-    return {"last_message": response["messages"][-1].content, "messages": response["messages"]}
+    return response
 
 
 @app.post("/test")

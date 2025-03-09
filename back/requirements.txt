@@ -13,3 +13,5 @@ streamlit
 wikipedia
 ipython
 python-multipart
+unstructured
+chromadb

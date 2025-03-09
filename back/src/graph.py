@@ -1,21 +1,27 @@
+# ========== Imports 
+
+# Util
 from typing_extensions import TypedDict
-from typing import Literal
-from langchain_google_vertexai import ChatVertexAI
+from typing import Annotated, Literal
+import os
+from dotenv import load_dotenv, find_dotenv
+from src.diagramCreator import run_agent
+
+# langchain
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.graph import StateGraph, MessagesState, START, END
+
+# GCP
 from vertexai.generative_models import GenerativeModel
 from vertexai.preview.generative_models import Image
-from langchain_core.tools import tool
-from src.diagramCreator import run_agent
-from pydantic import BaseModel
-import base64
 from google.cloud import aiplatform
-from dotenv import load_dotenv, find_dotenv
-import os
-#from IPython.display import Image, display
+
+# ========== Start
 
 load_dotenv(dotenv_path=find_dotenv('.env.development'))
 
@@ -24,299 +30,437 @@ location = os.getenv('LOCATION')
 endpoint_id = os.getenv('ENDPOINT_ID')
 endpoint_id2 = os.getenv('ENDPOINT_ID2')
 
-aiplatform.init(project=project_id, location=location)
-endpoint = aiplatform.Endpoint(endpoint_id)
-endpoint2 = aiplatform.Endpoint(endpoint_id2)
+memory = MemorySaver()
 
-members = ["creator",  "researcher", "extractor", "classifier"]
-options = members + ["FINISH"]
+llm = ChatOpenAI(model="gpt-4o")
 
-class AgentState(MessagesState):
-    """The 'next' variable indicates where to route to next."""
-    next: str 
+class GraphState(TypedDict):
+    messages: list
+    userQuestion: str
+    localQuestion: str
+    hasVisitedInvestigator: bool
+    hasVisitedDiagrams: bool
+    hasVisitedCreator: bool
+    hasVisitedEvaluator: bool
+    nextNode: Literal["investigator", "diagrams", "creator", "evaluator", "unifier"]
+    imagePath: str
+    endMessage: str
 
+class AgentState(TypedDict):
+    messages: list
+    userQuestion: str
+    localQuestion: str
+    imagePath: str
+    
+builder = StateGraph(GraphState)
 
-#AGENT PROMPTS
+class supervisorResponse(TypedDict):
+    localQuestion: Annotated[str, ..., "What is the cuestion for the worker node?"]
+    nextNode: Literal["investigator", "diagrams", "creator", "evaluator", "unifier"]
 
-def make_system_prompt(suffix: str) -> str:
-    return (
-        "You are a helpful AI assistant, collaborating with other assistants."
-        " Use the provided tools to progress towards answering the question."
-        " If you are unable to fully answer, that's OK, another assistant with different tools "
-        " will help where you left off. Execute what you can to make progress."
-        " If you or any of the other assistants have the final answer or deliverable,"
-        " prefix your response with FINISH so the team knows to stop."
-        f"\n{suffix}"
-    )
+supervisorSchema = {
+    "title": "SupervisorResponse",
+    "description": "Response from the supervisor indicating the next node and the setup question.",
+    "type": "object",
+    "properties": {
+        "localQuestion": {
+            "type": "string",
+            "description": "What is the question for the worker node?"
+        },
+        "nextNode": {
+            "type": "string",
+            "description": "The next node to act.",
+            "enum": ["investigator", "diagrams", "creator", "evaluator", "unifier"]
+        }
+    },
+    "required": ["setup", "nextNode"]
+}
 
-prompt_researcher = """You are a software architecture expert who knows about Attribute Driven Design (also
-known as ADD or ADD 3.0) and about tactics related to availability and performance (specifically load balancing and replication of servers/databases).
-If you are asked a puntual question about ADD or these tactics. If you are asked something like: Do you know about tactics for software architecture?, 
-ANSWER YOURSELF AND DO NOT CONTACT THE CREATOR AGENT
-You must also be able to answer questions about load balancing and replication, once you answer include FINISH. 
-ALWAYS FINISH THE JOB AFTER ANSWERING THE QUESTION. Always be really specific of what you need when directing the diagram creator and always indicate that you dont want any other specifications and details.
-Always ask a single simple text query similar to this example: Give me xml code of the diagram of a simple app. I want to have a load balancer, connected to two Application servers and a client. I dont have specific attributes or details, just do that.
-If the user asks for modifications of the diagram, you can just replicate the query, such as: Add a third server.
-IF the user previously asked for a modification, please include it in the new query.
-YOU MUST ALWAYS DELEGATE THE MODIFICATIONS OF THE XML CODE TO THE CREATOR, NEVER MODIFY YOURSELF THE XML CODE
-OF THE DIAGRAMS
+# ========== Prompts 
+
+def makeSupervisorPrompt(state: GraphState) -> str:
+    visited_nodes = []
+    if state["hasVisitedInvestigator"]:
+        visited_nodes.append("investigator")
+    if state["hasVisitedDiagrams"]:
+        visited_nodes.append("diagrams")
+    if state["hasVisitedCreator"]:
+        visited_nodes.append("creator")
+    if state["hasVisitedEvaluator"]:
+        visited_nodes.append("evaluator")
+
+    visited_nodes_str = ", ".join(visited_nodes) if visited_nodes else "none"
+
+    supervisorPrompt = f"""You are a supervisor tasked with managing a conversation between the following workers: investigator, 
+    diagrams, creator, evaluator. Given the following user request, respond with the worker to act next. Each worker will perform 
+    a task and respond with their results and status. There are 4 possible nodes: the investigator that has access to LLM and a local 
+    RAG, the diagrams node that classifies and extracts, the creator node that generates an image or code, and the evaluator 
+    that checks for viability and correctness of what the user says. There are some important flows you must respect: if the user just wants to 
+    know about Attribute Driven Design, only use the investigator. If the user wants to extract elements of a diagram, you must 
+    always classify first that diagram. If the user wants to describe a diagram, you must always first extract the elements of 
+    said diagram. If the user wants to create a diagram, you must always first research about the software architecture tactics 
+    that will be implemented in the created diagram. These are the nodes that you have visited: {visited_nodes_str}.
+    
+    This is the user question: {state["userQuestion"]}
+
+    These are the possible outputs: ['investigator', 'diagrams', 'creator', 'evaluator', 'unifier'].
+    In cas there is nothing else to do go to unifier
+    """ 
+
+    return supervisorPrompt
+
+prompt_researcher = """You are an expert in software architecture, specializing in Attribute Driven Design (ADD) and tactics related to availability 
+    and performance. Your task is to analyze the user's question and provide an accurate and well-explained response based on your expertise. 
+    You have access to two tools to assist you in answering:
+
+    - 'specialized_LLM': A powerful large language model fine-tuned for software architecture-related queries. Use this tool when you need 
+      a detailed explanation, best practices, or general knowledge about architecture principles.
+
+"""
+# TODO add rag tool
+"""
+    
+    - 'local_RAG': A local Retrieval-Augmented Generation (RAG) system with access to a curated knowledge base of software architecture 
+      documentation, case studies, and academic papers. Use this tool when you need precise, contextually relevant, or document-backed 
+      answers.
 """
 
-prompt_classifier = """You are an expert at classifying software architecure diagram. You are working with an expert extracting components of a diagram.
-Make sure to let him know the classification you made. You will receive the path to the image, give that to the tool
-in order to classify the diagrams. Pass the path of the image to the extractor too. NEVER include FINISH unless the user has
-only asked you to classify the diagram."""
+prompt_diagrams = """You are an expert in software architecture diagrams, specializing in classification, description, and extraction of relevant 
+    components. Your role is to analyze the given diagram and determine the best approach to process it based on the user's request. 
 
+    You have access to the following tools:
 
-prompt_extractor ="""You can extract the components out of diagrams, limit yourself to that function.
-You are working with a diagram classifier and a component describer. You will recieve the classification of the diagram. Make sure to tell the component describer
-what components you found, and remember to tell them the describer tool which classification the classifier did.
-You will receive the path to the image, give that to the describer too. Make sure to make the describer tool go next, it does not
-matter if your result is too vague"""
-
-prompt_describer ="""You are an expert describing the components of a software architecture diagram, focusing in
-tactics related to availability and performance of the system. You are working with a diagram extractor that will provide
-you with the classification of the diagram and the elements that he extracted. Make sure to take into consideration this 
-elements in your answer, and describe extensively the elements provided that relate to scalability and
-performance tactics (in particular, load balancing and replication)"""
+    - 'diagram_classifier': Identifies the type of diagram (e.g., UML, C4, sequence diagram, component diagram) to determine how it should be processed.
+    - 'diagram_descriptor': Generates a textual description of the diagram, summarizing its main elements and relationships.
+    - 'diagram_extractor': Extracts detailed elements (e.g., components, connections, attributes) from the diagram for further analysis or transformation.
+    """
 
 prompt_creator ="""You are an expert in creating xml code for software architecture diagrams.
 You are working with a researcher who will tell you exactly what you should do, please follow their instructions. Limit 
 yourself to load balancing and replication. You yourself are unable to create this diagrams, but you have a tool for
 this purpose named diagramCreator. Always use this tool  when the user asks for creation, modifications, or additions to the diagram"""
 
+evaluatorPrompt = f"""You are an expert in software architecture evaluation, specializing in assessing project feasibility and analyzing 
+    the strengths and weaknesses of proposed strategies. Your role is to critically evaluate the user's request and provide a well-informed 
+    assessment based on two specialized tools:
+
+    - 'feasibility_checker': Analyzes whether the proposed project, system, or architecture is viable based on technical, resource, and 
+      operational constraints.
+    - 'strategy_analyzer': Evaluates the proposed architectural strategy, listing its pros and cons to help the user make informed decisions.
+    """
+
+# ========== Tools 
+
+# ===== Investigator
+
+@tool
+def researcher_LLM(prompt: str) -> str:
+    """This researcher is able of answering questions only about Attribute Driven Design, also known as ADD or ADD 3.0
+    Remember the context is software architecture, dont confuse Attribute Driven Design with Attention-Deficit Disorder"""
+
+    response = llm.invoke(prompt)
+    return response
+
+# TODO add rag tool
+
+# ===== Diagrams
+
 @tool
 def diagram_describer(image_path: str) -> str:
-    """This tool is used exclusively to explain the software architecture tactics found in an image
-    of a diagram given by the user. Don't assume anything that is not explictly in the diagram, and 
-    focus most of all in tactics associated with performance and availability (specifically Load Balancing and Replication tactics).
-    If there are no explicit tactics associated to this, you must say so"""
-    image = Image.load_from_file(image_path)
+    """This tool is used exclusively to explain the software architecture tactics found in an imageof a diagram given by the user. 
+    Don't assume anything that is not explictly in the diagram, and focus most of all in tactics associated with performance and 
+    availability (specifically Load Balancing and Replication tactics).If there are no explicit tactics associated to this, 
+    you must say so"""
 
+    image = Image.load_from_file(image_path)
     generative_multimodal_model = GenerativeModel("gemini-1.0-pro-vision")
-    response = generative_multimodal_model.generate_content(["What software architecture tactics can you see in this diagram?", image])
+    response = generative_multimodal_model.generate_content([
+        "What software architecture tactics can you see in this diagram? "
+        "If it is a class diagram, analyze and evaluate it by identifying classes, attributes, methods, relationships, "
+        "Object-Oriented Design principles, and design patterns.", 
+        image
+    ])
     return response
 
 @tool
-def diagramCreator(prompt: str) ->str:
+def diagram_classify(image_path: str) -> str:
+    """Classifies a Software Architecture Diagram from an image file path using a LLM."""
+    
+    try:
+        image = Image.load_from_file(image_path)
+        model = GenerativeModel("gemini-1.0-pro-vision")
+        
+        response = model.generate_content([
+            "What type of software architecture diagram is this? Choose one of: "
+            "Components, Deployment, Context or Class. Only return the classification not any other text.",
+            image
+        ])
+        
+        classification = response.text.strip()
+
+        if "Components" in classification:
+            return "It is a Software Architecture Components Diagram"
+        elif "Deployment" in classification:
+            return "It is a Software Architecture Deployment Diagram"
+        elif "Class" in classification:
+            return "It is a Software Architecture Class Diagram"
+        elif "Context" in classification:
+            return "It is a Software Architecture Context Diagram"
+        else:
+            return "I couldn't determine the type of diagram."
+
+    except Exception as e:
+        return f"Error during classification: {str(e)}"
+    
+@tool
+def diagram_extractor(image_path: str, diagram_type: str) -> str:
+    """Extracts structured information from a software architecture diagram.
+    
+    - If the diagram is a class diagram, it extracts:
+      - List of identified classes.
+      - Attributes of each class.
+      - Methods of each class.
+      - Relationships between classes (association, inheritance, aggregation, composition, dependency).
+      
+    - If the diagram is a component or deployment diagram, it provides:
+      - A high-level description of components or infrastructure.
+      - Focus on performance and availability tactics (load balancing, replication, etc.).
+    
+    Use this tool when analyzing UML class diagrams, component diagrams, or deployment diagrams.
+    """
+    
+    try:
+        image = Image.load_from_file(image_path)
+        model = GenerativeModel("gemini-1.0-pro-vision")
+        
+        if diagram_type.lower() == "class":
+            prompt = (
+                "Analyze this UML class diagram and extract:\n"
+                "- List of identified classes.\n"
+                "- Attributes of each class.\n"
+                "- Methods of each class.\n"
+                "- Relationships between classes (association, inheritance, aggregation, composition, dependency)."
+            )
+        else:
+            prompt = (
+                "Analyze this software architecture diagram and describe:\n"
+                "- The key components and their roles.\n"
+                "- If it is a deployment diagram, describe the infrastructure elements.\n"
+                "- Any performance or availability tactics applied (e.g., load balancing, replication)."
+            )
+        
+        response = model.generate_content([prompt, image])
+        return response.text
+
+    except Exception as e:
+        return f"Error during extraction: {str(e)}"
+    
+    
+
+# ===== Creator
+
+@tool
+def diagram_creator(prompt: str) ->str:
     """This tool allows for creation of software architecture diagrams in a XML format.
     Always use this tool when the user wants to create a diagram and be really specific of what you need.
     Here is an example of a valid query: Give me xml code of the diagram of a simple app. I want to have a message broker, connected to two interfaces. I dont have specific attributes or details, just do that"""
     xml_code = run_agent(prompt)
     return xml_code
 
-@tool
-def diagram_describer_xml(xml: str) -> str:
-    """This tool is used to explain diagrams that are exclusively given by the user in xml code
-    Remember to explain thoroughly the purpose of each component of the diagram"""
-
-    generative_multimodal_model = GenerativeModel("gemini-1.5-pro-002")
-    response = generative_multimodal_model.generate_content(["Can you describe this xml file?", xml])
-    return response
+# ===== Evaluator
 
 @tool
-def researcher(prompt: str) -> str:
-    """This researcher is able of answering questions only about Attribute Driven Design, also known as ADD or ADD 3.0
-    Remember the context is software architecture, dont confuse Attribute Driven Design with Attention-Deficit Disorder"""
+def feasibility_checker(prompt: str) -> str:
+    """This tool is able of evaluate the viability of the plans the usser suggests, it can tell if the users ideas are viable or if it needs
+    any adjusments"""
 
-    llm = ChatVertexAI(model ="gemini-1.5-flash-002" )
     response = llm.invoke(prompt)
     return response
 
 @tool
-def diagram_extraction(image_path: str) -> str:
-    """Extracts components from a diagram image. 
-    Use when the user says he wants to extract the components of a diagram"""
-    with open(image_path, "rb") as image_file:
-        image_content = image_file.read()
-    encoded_image = base64.b64encode(image_content).decode('utf-8')
-    # Prepare the request payload for prediction
-    instance = {"content": encoded_image}
+def strategy_analyzer(prompt: str) -> str:
+    """This tools is able judge the pros and cons of the user's ideas, it is able to give a detailed analysis of the user's ideas
+    and give a detailed analysis of the pros and cons of the user's ideas"""
 
-    print("-----------------2")
+    response = llm.invoke(prompt)
+    return response
+
+# ========== Router 
+
+def router(state: GraphState) -> Literal["investigator", "diagrams", "creator", "evaluator", "unifier"]:
+    if state["nextNode"] == "unifier":
+        return "unifier"
+    elif state["nextNode"] == "investigator" and not state["hasVisitedInvestigator"]:
+        return "investigator"
+    elif state["nextNode"] == "diagrams" and not state["hasVisitedDiagrams"]:
+        return "diagrams"
+    elif state["nextNode"] == "creator" and not state["hasVisitedCreator"]:
+        return "creator"
+    elif state["nextNode"] == "evaluator" and not state["hasVisitedEvaluator"]:
+        return "evaluator"
+    else:
+        return "unifier"
+
+# ========== Nodes definition 
+
+# ===== Supervisor
+
+def supervisor_node(state: GraphState):
+    message = [
+            {"role": "system", "content": makeSupervisorPrompt(state)},
+        ] 
     
-    try:
-        # Call the Vertex AI endpoint to get predictions
-        response = endpoint2.predict(instances=[instance])
-        return response
-    except Exception as e:
-        return f"Error during prediction: {str(e)}"
+    response = llm.with_structured_output(supervisorSchema).invoke(message)
 
+    state_updated: GraphState = {
+        **state,
+        "localQuestion": response["localQuestion"],
+        "nextNode": response["nextNode"]
+    }
 
-@tool
-def classify(image_path: str) -> str:
-    """Classifies a Software Architecture Diagram from an image file path."""
-    with open(image_path, "rb") as image_file:
-        image_content = image_file.read()
-    encoded_image = base64.b64encode(image_content).decode('utf-8')
-    instance = {"content": encoded_image}
-    try:
-        response = endpoint.predict(instances=[instance])
+    return state_updated
 
-        print("-----------------")
-        print("classifier")
-        print(response)
-        print("-----------------")
-
-        predictions_list = response.predictions[0]
-        display_names = predictions_list['displayNames']
-        confidences = predictions_list['confidences']
-        max_index = confidences.index(max(confidences))
-        best_display_name = display_names[max_index]
-
-        if best_display_name == 'Components':
-            res = "It is a Software Architecture Components Diagram"
-        elif best_display_name == 'Despliegue':
-            res = "It is a Software Architecture Deployment Diagram"
-        elif best_display_name == 'Contexto':
-            res = "It is a Software Architecture Context Diagram"
-
-        return res
+# ===== Investigator
     
-    except Exception as e:
-        return f"Error during prediction: {str(e)}"
+researcher_agent = create_react_agent(llm, tools=[researcher_LLM],state_modifier=prompt_researcher)
 
-
-
-
-class Router(BaseModel):
-    """Worker to route to next. If no workers needed, route to FINISH."""
-
-    next: Literal["creator", "researcher", "extractor", "classifier", "FINISH"]
-
-def router(state: MessagesState):
-    messages = state["messages"]
-    last_message = messages[-1]
-    if "FINISH" in last_message.content:
-        return END
-    return "continue"
-
-
-def make_supervisor_node(llm: BaseChatModel, members: list[str]) -> str:
-    system_prompt = (
-        """You are a supervisor tasked with managing a conversation between the"
-        f" following workers: {members}. Given the following user request,"
-        " respond with the worker to act next. Each worker will perform a"
-        " task and respond with their results and status. There are some important
-        flows you must respect: if the user just wants to know about Attribute Driven Design, only use 
-        the researcher. If the user wants to extract elements of a diagram, you must
-        always classify first that diagram, if the user wants to describe a diagram,
-        you must always first extract the elements of said diagram. If the user wants to create
-        a diagram, you must always first research about the software architecture tactics that 
-        will be implemented in the created diagram.
-        """
-
+def researcher_node(state: GraphState) -> GraphState:
+    result = researcher_agent.invoke(
+        {
+            "messages": state["messages"],
+            "userQuestion": state["userQuestion"],
+            "localQuestion": state["localQuestion"],
+            "imagePath": state["imagePath"]
+        }
     )
 
-
-
-    def supervisor_node(state: AgentState) -> AgentState:
-        """An LLM-based router."""
-        messages = [
-            {"role": "system", "content": system_prompt},
-        ] + state["messages"]
-        response = llm.with_structured_output(Router).invoke(messages) 
-        next_ =   response.next
-        if next_ == "FINISH":
-            next_ = END
-
-        return {"next": next_}
-
-    return supervisor_node
-
-memory = MemorySaver()
-
-from langchain_openai import ChatOpenAI
-
-llm = ChatOpenAI(model="gpt-4o")
-
-builder = StateGraph(MessagesState)
-
-
-#Creacion agentes expertos
-
-describer_agent = create_react_agent(llm, tools=[diagram_describer],state_modifier=make_system_prompt(prompt_describer))
-
-def describer_node(state: AgentState) -> AgentState:
-    result = describer_agent.invoke(state)
     return {
-        "messages": [
-            HumanMessage(content=result["messages"][-1].content, name="describer")
-        ]
+        **state,
+        "messages": [AIMessage(content=msg.content, name="researcher") for msg in result["messages"]],
+        "hasVisitedInvestigator": True
     }
 
+# ===== Diagrams
 
-creator_agent = create_react_agent(llm, tools=[diagramCreator], state_modifier=make_system_prompt(prompt_creator))
+diagrams_agent = create_react_agent(llm, tools=[diagram_classify, diagram_extractor, diagram_describer], state_modifier=prompt_diagrams)
 
-def creator_node(state: AgentState) -> AgentState:
-    result = creator_agent.invoke(state)
+def diagrams_node(state: GraphState) -> GraphState:
+    result = diagrams_agent.invoke(
+        {
+            "messages": state["messages"],
+            "userQuestion": state["userQuestion"],
+            "localQuestion": state["localQuestion"],
+            "imagePath": state["imagePath"]
+        }
+    )
+
     return {
-        "messages":[
-            HumanMessage(content=result["messages"][-1].content, name="creator")
-        ]
+        **state,
+        "messages": [AIMessage(content=msg.content, name="diagrams") for msg in result["messages"]],
+        "hasVisitedDiagrams": True
     }
 
-researcher_agent = create_react_agent(llm, tools=[researcher], state_modifier= make_system_prompt(prompt_researcher))
+# ===== Creator
 
-def researcher_node(state: AgentState) -> AgentState:
-    result = researcher_agent.invoke(state)
+creator_agent = create_react_agent(llm, tools=[diagram_creator], state_modifier=prompt_creator)
+
+def creator_node(state: GraphState) -> GraphState:
+    result = creator_agent.invoke(
+        {
+            "messages": state["messages"],
+            "userQuestion": state["userQuestion"],
+            "localQuestion": state["localQuestion"],
+            "imagePath": state["imagePath"]
+        }
+    )
+
     return {
-        "messages":[
-            HumanMessage(content=result["messages"][-1].content, name = "researcher")
-        ]
+        **state,
+        "messages": [AIMessage(content=msg.content, name="creator") for msg in result["messages"]],
+        "hasVisitedCreator": True
     }
 
-extraction_agent = create_react_agent(llm, tools=[diagram_extraction], state_modifier=make_system_prompt(prompt_extractor))
+# ===== Evaluator
 
-def extraction_node(state: AgentState) -> AgentState:
-    result = extraction_agent.invoke(state)
+evaluator_agent = create_react_agent(llm, tools=[feasibility_checker, strategy_analyzer], state_modifier=evaluatorPrompt)
+
+def evaluator_node(state: GraphState) -> GraphState:
+    result = evaluator_agent.invoke(
+        {
+            "messages": state["messages"],
+            "userQuestion": state["userQuestion"],
+            "localQuestion": state["localQuestion"],
+            "imagePath": state["imagePath"]
+        }
+    )
+
     return {
-        "messages":[
-            HumanMessage(content=result["messages"][-1].content, name="extractor")
-        ]
+        **state,
+        "messages": [AIMessage(content=msg.content, name="evaluator") for msg in result["messages"]],
+        "hasVisitedEvaluator": True
     }
 
-classifier_agent = create_react_agent(llm, tools=[classify], state_modifier=make_system_prompt(prompt_classifier))
+# ===== Unifier
 
-def classify_node(state: AgentState) -> AgentState:
-    result = classifier_agent.invoke(state)
+def unifier_node(state: GraphState) -> GraphState:
+    prompt = f"""You are an expert assistant in information synthesis. You will receive a list of messages that may contain 
+    scattered ideas, arguments, questions, and answers. Your task is to unify and structure the information into several 
+    coherent paragraphs, ensuring clarity and fluency for the user. Each paragraph should be limited to one idea. This is 
+    the list of messages you need to unify: {state['messages']}"""
+
+    response = llm.invoke(prompt)
+
     return {
-        "messages":[
-            HumanMessage(content=result["messages"][-1].content, name="classifier")
-        ]
+        **state,
+        "endMessage": response.content
     }
 
+# ========== Nodes creation 
 
-#Node creation
-
-supervisor_node = make_supervisor_node(llm, members)
 builder.add_node("supervisor", supervisor_node)
-builder.add_node("describer", describer_node)
+builder.add_node("investigator", researcher_node)
+builder.add_node("diagrams", diagrams_node)
 builder.add_node("creator", creator_node)
-builder.add_node("researcher", researcher_node)
-builder.add_node("extractor", extraction_node)
-builder.add_node("classifier", classify_node)
+builder.add_node("evaluator", evaluator_node)
+builder.add_node("unifier", unifier_node)
+
+# ========== Edges creation 
+
 builder.add_edge(START, "supervisor")
-builder.add_edge("supervisor", END)
+builder.add_conditional_edges("supervisor", router)
+builder.add_edge("investigator", "supervisor")
+builder.add_edge("diagrams", "supervisor")
+builder.add_edge("creator", "supervisor")
+builder.add_edge("evaluator", "supervisor")
+builder.add_edge("unifier", END)
 
-
-#Edges Creation
-
-
-
-builder.add_conditional_edges("supervisor", lambda state: state["next"])
-builder.add_conditional_edges("classifier", router, {"continue": "extractor", END: END})
-builder.add_edge("extractor","describer")
-builder.add_conditional_edges("researcher", router, {"continue": "creator", END: END})
-builder.add_edge("creator", END)
-builder.add_edge("describer", END)
-
+# ========== Graph 
 
 graph = builder.compile(checkpointer=memory)
 
+"""
+config = {"configurable": {"thread_id": "1"}}
 
-#image_data = graph.get_graph(xray=True).draw_mermaid_png()
+from PIL import Image
+
+graph_image_path = "graph.png"
+graph_image = graph.get_graph().draw_mermaid_png()
+with open(graph_image_path, "wb") as f:
+    f.write(graph_image)
+
+test = graph.invoke({
+        "messages": [] ,
+        "userQuestion": "What is add 3.0", 
+        "localQuestion": "", 
+        "hasVisitedInvestigator": False
+        , "hasVisitedDiagrams": False, 
+        "hasVisitedCreator": False, 
+        "hasVisitedEvaluator": False, 
+        "nextNode": "supervisor", 
+        "imagePath": "",
+        "endMessage": ""
+    }, config)
 
 
-#with open("graph_image.png", "wb") as f:
-#    f.write(image_data)
+print(test)
+"""
