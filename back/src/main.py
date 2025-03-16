@@ -32,7 +32,7 @@ async def message(message: str = Form(...), file: Optional[UploadFile] = File(No
 
     # Prepare the input for the graph
     response = graph.invoke({
-        "messages": [{"role": "user", "content": message}],
+        "messages": [{"role": "user", "content": message}, {"role": "user", "content": "this is the image path: " + image_path}],
         "userQuestion": message,
         "localQuestion": "",
         "hasVisitedInvestigator": False,
