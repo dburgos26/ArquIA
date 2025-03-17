@@ -1,93 +1,140 @@
 .chat-container {
-    display: flex;
-    flex-direction: column;
-    height: 85vh; 
-    width: 80%;
-    margin: auto;
-    padding: 20px 0; 
-    box-sizing: border-box; 
-  }
-  
-  .messages-box {
-    flex-grow: 1;
-    overflow-y: auto;
-    padding: 10px;
-    background-color: #30302e !important;
-    border-radius: 8px;
-  }
-  
-  .input-container {
-    display: flex;
-    gap: 10px;
-    margin-top: 10px;
-  }
-  
-  .user-message {
-    background-color: #222220;
-    padding: 8px;
-    border-radius: 8px;
-    margin-bottom: 5px;
-    text-align: right;
-    color: white;
-  }
-  
+  display: flex;
+  flex-direction: column;
+  height: 85vh; 
+  width: 80%;
+  margin: auto;
+  padding: 20px 0; 
+  box-sizing: border-box; 
+}
 
-  .bot-message {
-    background-color: #484846;
-    padding: 8px;
-    border-radius: 8px;
-    margin-bottom: 5px;
-    cursor: pointer;
-    transition: background-color 0.3s;
-    color: white;
-  }
-  
-  .bot-message:hover {
-    background-color: #575754;
-  }
+.messages-box {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 10px;
+  background-color: #30302e !important;
+  border-radius: 8px;
+}
 
-  .input-field {
-    background-color: #30302e;
-    border-radius: 8px;
-  }
+.input-container {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
 
-  .input-field .MuiOutlinedInput-root {
-    background-color: #30302e;
-    border-radius: 8px;
-    color: white;
-  }
+.user-message {
+  background-color: #222220;
+  padding: 8px;
+  border-radius: 8px;
+  margin-bottom: 5px;
+  text-align: right;
+  color: white;
+}
 
-  .input-field .MuiOutlinedInput-input {
-    color: white;
-  }
+.bot-message {
+  background-color: #484846;
+  padding: 8px;
+  border-radius: 8px;
+  margin-bottom: 5px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+  color: white;
+}
 
-  .input-field .MuiOutlinedInput-input::placeholder {
-    color: rgb(134, 130, 130);
-    opacity: 1;
-  }
+.bot-message:hover {
+  background-color: #575754;
+}
 
-  .send-button {
-    background-color: rgb(88, 88, 88) !important;
-    color: white;
-  }
+.input-field {
+  background-color: #30302e;
+  border-radius: 8px;
+}
 
-  .send-button:hover {
-    background-color: rgb(108, 108, 108) !important;
-  }
+.input-field .MuiOutlinedInput-root {
+  background-color: #30302e;
+  border-radius: 8px;
+  color: white;
+}
 
-  .nodes-dialog .MuiPaper-root {
-    background-color: #30302e;
-    color: white;
-  }
-  
-  .nodes-dialog .MuiDialogTitle-root {
-    background-color: #30302e;
-    color: white;
-  }
-  
-  .nodes-dialogr .MuiDialogContent-root {
-    background-color: #30302e;
-    color: white;
-  }
+.input-field .MuiOutlinedInput-input {
+  color: white;
+}
 
-  
+.input-field .MuiOutlinedInput-input::placeholder {
+  color: rgb(134, 130, 130);
+  opacity: 1;
+}
+
+/* Styling for the attachment icon */
+.input-field .MuiIconButton-root {
+  color: white !important;
+}
+
+.input-field .MuiBadge-badge {
+  background-color: #1976d2;
+  color: white;
+}
+
+/* Styling for image preview chips */
+.MuiChip-root {
+  background-color: #3a3a38 !important;
+  color: white;
+  border: 1px solid #4a4a48 !important;
+}
+
+.MuiChip-icon {
+  color: #1976d2;
+}
+
+.MuiChip-deleteIcon {
+  color: #d32f2f;
+}
+
+.MuiChip-deleteIcon:hover {
+  color: #f44336;
+}
+
+/* Styling for images in messages */
+.message-image {
+  max-width: 200px;
+  max-height: 150px;
+  border-radius: 4px;
+  margin-top: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  border: 1px solid #4a4a48;
+}
+
+.image-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.send-button {
+  background-color: rgb(88, 88, 88) !important;
+  color: white;
+}
+
+.send-button:hover {
+  background-color: rgb(108, 108, 108) !important;
+}
+
+.nodes-dialog .MuiPaper-root {
+  background-color: #30302e;
+  color: white;
+}
+
+.nodes-dialog .MuiDialogTitle-root {
+  background-color: #30302e;
+  color: white;
+}
+
+.nodes-dialog .MuiDialogContent-root {
+  background-color: #30302e;
+  color: white;
+}
+
+.nodes-dialog .MuiIconButton-root {
+  color: white;
+}

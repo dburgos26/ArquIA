@@ -42,14 +42,16 @@ class GraphState(TypedDict):
     hasVisitedCreator: bool
     hasVisitedEvaluator: bool
     nextNode: Literal["investigator", "creator", "evaluator", "unifier"]
-    imagePath: str
+    imagePath1: str
+    imagePath2: str
     endMessage: str
 
 class AgentState(TypedDict):
     messages: list
     userQuestion: str
     localQuestion: str
-    imagePath: str
+    imagePath1: str
+    imagePath2: str
     
 builder = StateGraph(GraphState)
 
@@ -110,6 +112,7 @@ def makeSupervisorPrompt(state: GraphState) -> str:
         - for the creator node ask to generate a diagram or code example
         - for the evaluator node ask to evaluate the user's ideas, IF THE USER HAVE 2 DIAGRAMS YOU NEED TO SEND TO THIS NODE ONLY
     always give some context in the question for the specific node
+    YOU CAN NEVER GO FIRST TO THE UNIFIER NODE, YOU NEED TO GO TO AT LEAST OTHER NODE FIRST
     """ 
 
     return supervisorPrompt
@@ -136,15 +139,29 @@ You are working with a researcher who will tell you exactly what you should do, 
 yourself to load balancing and replication. You yourself are unable to create this diagrams, but you have a tool for
 this purpose named diagramCreator. Always use this tool  when the user asks for creation, modifications, or additions to the diagram"""
 
-evaluatorPrompt = f"""You are an expert in software architecture evaluation, specializing in assessing project feasibility and analyzing 
-    the strengths and weaknesses of proposed strategies. Your role is to critically evaluate the user's request and provide a well-informed 
-    assessment based on two specialized tools:
+def getEvaluatorPrompt(image_path1: str, image_path2) -> str:
 
-    - `Theory Tool` for correctness checks.
-    - `Viability Tool` for feasibility assessment.
-    - `Needs Tool` for requirement alignment.
-    - `Analyze Tool` for comparing two diagrams.
-    """
+    image1 = ""
+    image2 = ""
+
+    if image_path1:
+        image1 = "this is the first image path: " + image_path1
+    if image_path2:
+        image2 = "this is the second image path: " + image_path2
+
+    evaluatorPrompt = f"""You are an expert in software architecture evaluation, specializing in assessing project feasibility and analyzing 
+        the strengths and weaknesses of proposed strategies. Your role is to critically evaluate the user's request and provide a well-informed 
+        assessment based on two specialized tools:
+
+        - `Theory Tool` for correctness checks.
+        - `Viability Tool` for feasibility assessment.
+        - `Needs Tool` for requirement alignment.
+        - `Analyze Tool` for comparing two diagrams.
+        {image1}
+        {image2}
+        """
+    
+
 
 # ===== Tools
 
@@ -294,7 +311,8 @@ def researcher_node(state: GraphState) -> GraphState:
             "messages": state["messages"],
             "userQuestion": state["userQuestion"],
             "localQuestion": state["localQuestion"],
-            "imagePath": state["imagePath"]
+            "imagePath1": state["imagePath1"],
+            "imagePath2": state["imagePath2"]
         }
     )
 
@@ -314,7 +332,8 @@ def creator_node(state: GraphState) -> GraphState:
             "messages": state["messages"],
             "userQuestion": state["userQuestion"],
             "localQuestion": state["localQuestion"],
-            "imagePath": state["imagePath"]
+            "imagePath1": state["imagePath1"],
+            "imagePath2": state["imagePath2"]
         }
     )
 
@@ -326,15 +345,19 @@ def creator_node(state: GraphState) -> GraphState:
 
 # ===== Evaluator
 
-evaluator_agent = create_react_agent(llm, tools=[theory_tool, viability_tool, needs_tool], state_modifier=evaluatorPrompt)
+
 
 def evaluator_node(state: GraphState) -> GraphState:
+
+    evaluator_agent = create_react_agent(llm, tools=[theory_tool, viability_tool, needs_tool, analyze_tool], state_modifier=getEvaluatorPrompt(state["imagePath1"], state["imagePath2"]))
+
     result = evaluator_agent.invoke(
         {
             "messages": state["messages"],
             "userQuestion": state["userQuestion"],
             "localQuestion": state["localQuestion"],
-            "imagePath": state["imagePath"]
+            "imagePath1": state["imagePath1"],
+            "imagePath2": state["imagePath2"]
         }
     )
 
@@ -348,9 +371,18 @@ def evaluator_node(state: GraphState) -> GraphState:
 
 def unifier_node(state: GraphState) -> GraphState:
     prompt = f"""You are an expert assistant in information synthesis. You will receive a list of messages that may contain 
-    scattered ideas, arguments, questions, and answers. Your task is to unify and structure the information into several 
-    coherent paragraphs, ensuring clarity and fluency for the user. Each paragraph should be limited to one idea. This is 
-    the list of messages you need to unify: {state['messages']}"""
+    scattered ideas, arguments, questions, and answers.
+
+    YOUR MOST IMPORTANT TASK: Format your response using MULTIPLE CLEARLY SEPARATED PARAGRAPHS.
+    
+    Specific requirements:
+    1. Organize the information into 2-4 distinct paragraphs minimum
+    2. Each paragraph must focus on exactly one main idea or theme
+    3. Use proper paragraph breaks (double line breaks) between paragraphs
+    4. Never merge all content into a single paragraph
+    5. Prioritize readability through clear structure over completeness
+    
+    Synthesize this information into a well-structured response: {state['messages']}"""
 
     response = llm.invoke(prompt)
 

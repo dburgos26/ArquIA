@@ -5,7 +5,7 @@ import os
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
-config = {"configurable": {"thread_id": "1"}}
+config = {"configurable": {"thread_id": "2"}}
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,22 +18,33 @@ app.add_middleware(
 os.makedirs("images", exist_ok=True)
 
 @app.post("/message")
-async def message(message: str = Form(...), file: Optional[UploadFile] = File(None)):
+async def message(message: str = Form(...), image1: Optional[UploadFile] = File(None), image2: Optional[UploadFile] = File(None)):
     if not message:
         return {"error": "No message provided"}
 
-    image_path = ""
-    if file and file.filename:  # Check if the file is not empty
+    image_path1 = ""
+    if image1 and image1.filename:  # Check if the file is not empty
         # Save the uploaded image
-        image_path = os.path.join("images", file.filename)
-        with open(image_path, "wb") as image_file:
-            content = await file.read()
+        image_path1 = os.path.join("images", image1.filename)
+        with open(image_path1, "wb") as image_file:
+            content = await image1.read()
+            image_file.write(content)
+
+    image_path2 = ""
+    if image2 and image2.filename:  # Check if the file is not empty
+        # Save the uploaded image
+        image_path2 = os.path.join("images", image2.filename)
+        with open(image_path2, "wb") as image_file:
+            content = await image2.read()
             image_file.write(content)
 
     messageList = [{"role": "user", "content": message}]
 
-    if image_path:
-        messageList.append({"role": "user", "content": "this is the image path: " + image_path})
+    if image_path1:
+        messageList.append({"role": "user", "content": "this is the image path: " + image_path1})
+
+    if image_path2:
+        messageList.append({"role": "user", "content": "this is the second image path: " + image_path2})
 
     
 
@@ -47,7 +58,8 @@ async def message(message: str = Form(...), file: Optional[UploadFile] = File(No
         "hasVisitedCreator": False,
         "hasVisitedEvaluator": False,
         "nextNode": "supervisor",
-        "imagePath": image_path,
+        "imagePath1": image_path1,
+        "imagePath2": image_path2,
         "endMessage": ""
     }, config)
 
