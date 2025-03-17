@@ -41,10 +41,11 @@ class GraphState(TypedDict):
     hasVisitedInvestigator: bool
     hasVisitedCreator: bool
     hasVisitedEvaluator: bool
-    nextNode: Literal["investigator", "creator", "evaluator", "unifier"]
+    nextNode: Literal["investigator", "creator", "evaluator", "asr", "unifier"]
     imagePath1: str
     imagePath2: str
     endMessage: str
+    hasVisitedASR: bool 
 
 class AgentState(TypedDict):
     messages: list
@@ -56,8 +57,8 @@ class AgentState(TypedDict):
 builder = StateGraph(GraphState)
 
 class supervisorResponse(TypedDict):
-    localQuestion: Annotated[str, ..., "What is the cuestion for the worker node?"]
-    nextNode: Literal["investigator", "creator", "evaluator", "unifier"]
+    localQuestion: Annotated[str, ..., "What is the question for the worker node?"]
+    nextNode: Literal["investigator", "creator", "evaluator", "asr", "unifier"]
 
 supervisorSchema = {
     "title": "SupervisorResponse",
@@ -71,10 +72,10 @@ supervisorSchema = {
         "nextNode": {
             "type": "string",
             "description": "The next node to act.",
-            "enum": ["investigator", "creator", "evaluator", "unifier"]
+            "enum": ["investigator", "creator", "evaluator", "unifier", "asr"]
         }
     },
-    "required": ["setup", "nextNode"]
+    "required": ["localQuestion", "nextNode"]
 }
 
 # ========== Prompts 
@@ -89,32 +90,37 @@ def makeSupervisorPrompt(state: GraphState) -> str:
         visited_nodes.append("creator")
     if state["hasVisitedEvaluator"]:
         visited_nodes.append("evaluator")
+    if state.get("hasVisitedASR", False):
+        visited_nodes.append("asr")
 
     visited_nodes_str = ", ".join(visited_nodes) if visited_nodes else "none"
 
     supervisorPrompt = f"""You are a supervisor tasked with managing a conversation between the following workers: investigator, 
-    diagrams, creator, evaluator. Given the following user request, respond with the worker to act next. Each worker will perform 
-    a task and respond with their results and status. There are 4 possible nodes: the investigator that has access to LLM and a local 
-    RAG, the diagrams node that classifies and extracts, the creator node that generates an image or code, and the evaluator 
-    that checks for viability and correctness of what the user says. There are some important flows you must respect: if the user just wants to 
-    know about Attribute Driven Design, only use the investigator. If the user wants to extract elements of a diagram, you must 
-    always classify first that diagram. If the user wants to describe a diagram, you must always first extract the elements of 
-    said diagram. If the user wants to create a diagram, you must always first research about the software architecture tactics 
-    that will be implemented in the created diagram. These are the nodes that you have visited: {visited_nodes_str}.
+    diagrams, creator, evaluator, and ASR advisor. Given the following user request, respond with the worker to act next. 
+    Each worker will perform a task and respond with their results and status.
+    
+    Important flows:
+    - If the user just asks about ADD, use the investigator.
+    - If the user wants to extract or describe a diagram, first classify or extract the diagram elements.
+    - If the user provides an ASR and limitations (and optionally an image of an implementation), route to the ASR node.
+    
+    Visited nodes so far: {visited_nodes_str}.
     
     This is the user question: {state["userQuestion"]}
 
-    These are the possible outputs: ['investigator', 'creator', 'evaluator', 'unifier'].
-    In case there is nothing else to do go to unifier
-
-    You also need to define a specific question for the node you send: 
-        - for the investigator node only ask for concepts or patterns in the user diagrams
-        - for the creator node ask to generate a diagram or code example
-        - for the evaluator node ask to evaluate the user's ideas, IF THE USER HAVE 2 DIAGRAMS YOU NEED TO SEND TO THIS NODE ONLY
-    always give some context in the question for the specific node
-    YOU CAN NEVER GO FIRST TO THE UNIFIER NODE, YOU NEED TO GO TO AT LEAST OTHER NODE FIRST
-    """ 
-
+    The ASR and limitations can be found in the user question.
+    
+    The possible outputs: ['investigator', 'creator', 'evaluator', 'asr', 'unifier'].
+    In case there is nothing else to do go to unifier.
+    
+    You also need to define a specific question for the node you send:
+      - For the investigator node: ask for concepts or patterns in the user diagrams.
+      - For the creator node: ask to generate a diagram or code example.
+      - For the evaluator node: ask to evaluate the user's ideas, especially if two diagrams are provided.
+      - For the ASR node: if no diagram is provided, ask for recommendations on how to implement the ASR given the limitations; if a diagram is provided, ask to evaluate whether the implementation meets the ASR and adheres to the limitations.
+    
+    NOTE: YOU CANNOT GO DIRECTLY TO THE UNIFIER NODE; you must go to at least one worker node before.
+    """
     return supervisorPrompt
 
 prompt_researcher = """You are an expert in software architecture, specializing in Attribute Driven Design (ADD) and tactics related to availability 
@@ -137,10 +143,10 @@ prompt_researcher = """You are an expert in software architecture, specializing 
 prompt_creator ="""You are an expert in creating xml code for software architecture diagrams.
 You are working with a researcher who will tell you exactly what you should do, please follow their instructions. Limit 
 yourself to load balancing and replication. You yourself are unable to create this diagrams, but you have a tool for
-this purpose named diagramCreator. Always use this tool  when the user asks for creation, modifications, or additions to the diagram"""
+this purpose named diagramCreator. Always use this tool when the user asks for creation, modifications, or additions to the diagram.
+"""
 
 def getEvaluatorPrompt(image_path1: str, image_path2) -> str:
-
     image1 = ""
     image2 = ""
 
@@ -160,15 +166,14 @@ def getEvaluatorPrompt(image_path1: str, image_path2) -> str:
         {image1}
         {image2}
         """
-    
-
+    return evaluatorPrompt
 
 # ===== Tools
 
 llm_prompt = "Retrieve general software architecture knowledge. Answer concisely and focus on key concepts:"
 
 llmWithImages_prompt = """Analyze the diagram and provide a detailed explanation of the software architecture tactics found in the image. 
-    Focus on performance and availability tactics"""
+    Focus on performance and availability tactics."""
 
 # TODO add rag tool
 
@@ -193,17 +198,15 @@ analyze_prompt = """Analyze the following pair of diagrams:
 
 @tool
 def LLM(prompt: str) -> str:
-    """This researcher is able of answering questions only about Attribute Driven Design, also known as ADD or ADD 3.0
-    Remember the context is software architecture, dont confuse Attribute Driven Design with Attention-Deficit Disorder"""
-
+    """This researcher is able of answering questions only about Attribute Driven Design, also known as ADD or ADD 3.0.
+    Remember the context is software architecture, don't confuse Attribute Driven Design with Attention-Deficit Disorder."""
     response = llm.invoke(prompt)
     return response
 
 @tool
 def LLMWithImages(image_path: str) -> str:
     """This researcher is able of answering questions about software architecture diagrams, patterns, and visual representations.
-    Remember to focus on performance and availability tactics, and always use the image as a reference"""
-
+    Remember to focus on performance and availability tactics, and always use the image as a reference."""
     image = Image.load_from_file(image_path)
     generative_multimodal_model = GenerativeModel("gemini-1.0-pro-vision")
     response = generative_multimodal_model.generate_content([
@@ -219,11 +222,11 @@ def LLMWithImages(image_path: str) -> str:
 # ===== Creator
 
 @tool
-def diagram_creator(prompt: str) ->str:
-    """This tool allows for creation of software architecture diagrams in a XML format.
-    Always use this tool when the user wants to create a diagram and be really specific of what you need.
-    Here is an example of a valid query: Give me xml code of the diagram of a simple app. I want to have 
-    a message broker, connected to two interfaces. I dont have specific attributes or details, just do that"""
+def diagram_creator(prompt: str) -> str:
+    """This tool allows for creation of software architecture diagrams in an XML format.
+    Always use this tool when the user wants to create a diagram and be really specific about what you need.
+    Here is an example of a valid query: Give me XML code of the diagram of a simple app. I want to have 
+    a message broker connected to two interfaces. I don't have specific attributes or details; just do that."""
     xml_code = run_agent(prompt)
     return xml_code
 
@@ -232,21 +235,18 @@ def diagram_creator(prompt: str) ->str:
 @tool
 def theory_tool(prompt: str) -> str:
     """This evaluator is able to check the theoretical correctness of the architecture diagram. It follows best practices and provides a detailed analysis."""
-
     response = llm.invoke(theory_prompt + prompt)
     return response
 
 @tool
 def viability_tool(prompt: str) -> str:
     """This evaluator is able to check the feasibility of the user's ideas. It provides a detailed analysis of the viability of the proposed strategies."""
-
     response = llm.invoke(viability_prompt + prompt)
     return response
 
 @tool
 def needs_tool(prompt: str) -> str:
     """This evaluator is able to check the user's requirements and verify if they align with the proposed architecture. It focuses on the user's needs."""
-
     response = llm.invoke(needs_prompt + prompt)
     return response
 
@@ -257,7 +257,6 @@ def analyze_tool(image_path: str, image_path2: str) -> str:
     It evaluates whether the component's implementation (class diagram) is properly designed to support 
     quality attributes such as scalability and performance, among others. It provides a detailed assessment 
     highlighting strengths, deficiencies, and improvement suggestions."""
-
     image = Image.load_from_file(image_path)
     image2 = Image.load_from_file(image_path2)
     generative_multimodal_model = GenerativeModel("gemini-1.0-pro-vision")
@@ -270,9 +269,11 @@ def analyze_tool(image_path: str, image_path2: str) -> str:
 
 # ========== Router 
 
-def router(state: GraphState) -> Literal["investigator", "creator", "evaluator", "unifier"]:
+def router(state: GraphState) -> Literal["investigator", "creator", "evaluator", "asr", "unifier"]:
     if state["nextNode"] == "unifier":
         return "unifier"
+    elif state["nextNode"] == "asr" and not state.get("hasVisitedASR", False):
+        return "asr"
     elif state["nextNode"] == "investigator" and not state["hasVisitedInvestigator"]:
         return "investigator"
     elif state["nextNode"] == "creator" and not state["hasVisitedCreator"]:
@@ -288,8 +289,8 @@ def router(state: GraphState) -> Literal["investigator", "creator", "evaluator",
 
 def supervisor_node(state: GraphState):
     message = [
-            {"role": "system", "content": makeSupervisorPrompt(state)},
-        ] 
+        {"role": "system", "content": makeSupervisorPrompt(state)},
+    ]
     
     response = llm.with_structured_output(supervisorSchema).invoke(message)
 
@@ -298,27 +299,23 @@ def supervisor_node(state: GraphState):
         "localQuestion": response["localQuestion"],
         "nextNode": response["nextNode"]
     }
-
     return state_updated
 
 # ===== Investigator
     
-researcher_agent = create_react_agent(llm, tools=[LLM, LLMWithImages],state_modifier=prompt_researcher)
+researcher_agent = create_react_agent(llm, tools=[LLM, LLMWithImages], state_modifier=prompt_researcher)
 
 def researcher_node(state: GraphState) -> GraphState:
-    result = researcher_agent.invoke(
-        {
-            "messages": state["messages"],
-            "userQuestion": state["userQuestion"],
-            "localQuestion": state["localQuestion"],
-            "imagePath1": state["imagePath1"],
-            "imagePath2": state["imagePath2"]
-        }
-    )
-
+    result = researcher_agent.invoke({
+        "messages": state["messages"],
+        "userQuestion": state["userQuestion"],
+        "localQuestion": state["localQuestion"],
+        "imagePath1": state["imagePath1"],
+        "imagePath2": state["imagePath2"]
+    })
     return {
         **state,
-        "messages": [AIMessage(content=msg.content, name="researcher") for msg in result["messages"]],
+        "messages": state["messages"] + [AIMessage(content=msg.content, name="researcher") for msg in result["messages"]],
         "hasVisitedInvestigator": True
     }
 
@@ -327,43 +324,34 @@ def researcher_node(state: GraphState) -> GraphState:
 creator_agent = create_react_agent(llm, tools=[diagram_creator], state_modifier=prompt_creator)
 
 def creator_node(state: GraphState) -> GraphState:
-    result = creator_agent.invoke(
-        {
-            "messages": state["messages"],
-            "userQuestion": state["userQuestion"],
-            "localQuestion": state["localQuestion"],
-            "imagePath1": state["imagePath1"],
-            "imagePath2": state["imagePath2"]
-        }
-    )
-
+    result = creator_agent.invoke({
+        "messages": state["messages"],
+        "userQuestion": state["userQuestion"],
+        "localQuestion": state["localQuestion"],
+        "imagePath1": state["imagePath1"],
+        "imagePath2": state["imagePath2"]
+    })
     return {
         **state,
-        "messages": [AIMessage(content=msg.content, name="creator") for msg in result["messages"]],
+        "messages": state["messages"] + [AIMessage(content=msg.content, name="creator") for msg in result["messages"]],
         "hasVisitedCreator": True
     }
 
 # ===== Evaluator
 
-
-
 def evaluator_node(state: GraphState) -> GraphState:
-
-    evaluator_agent = create_react_agent(llm, tools=[theory_tool, viability_tool, needs_tool, analyze_tool], state_modifier=getEvaluatorPrompt(state["imagePath1"], state["imagePath2"]))
-
-    result = evaluator_agent.invoke(
-        {
-            "messages": state["messages"],
-            "userQuestion": state["userQuestion"],
-            "localQuestion": state["localQuestion"],
-            "imagePath1": state["imagePath1"],
-            "imagePath2": state["imagePath2"]
-        }
-    )
-
+    evaluator_agent = create_react_agent(llm, tools=[theory_tool, viability_tool, needs_tool, analyze_tool], 
+                                          state_modifier=getEvaluatorPrompt(state["imagePath1"], state["imagePath2"]))
+    result = evaluator_agent.invoke({
+        "messages": state["messages"],
+        "userQuestion": state["userQuestion"],
+        "localQuestion": state["localQuestion"],
+        "imagePath1": state["imagePath1"],
+        "imagePath2": state["imagePath2"]
+    })
     return {
         **state,
-        "messages": [AIMessage(content=msg.content, name="evaluator") for msg in result["messages"]],
+        "messages": state["messages"] + [AIMessage(content=msg.content, name="evaluator") for msg in result["messages"]],
         "hasVisitedEvaluator": True
     }
 
@@ -376,19 +364,48 @@ def unifier_node(state: GraphState) -> GraphState:
     YOUR MOST IMPORTANT TASK: Format your response using MULTIPLE CLEARLY SEPARATED PARAGRAPHS.
     
     Specific requirements:
-    1. Organize the information into 2-4 distinct paragraphs minimum
-    2. Each paragraph must focus on exactly one main idea or theme
-    3. Use proper paragraph breaks (double line breaks) between paragraphs
-    4. Never merge all content into a single paragraph
-    5. Prioritize readability through clear structure over completeness
+    1. Organize the information into 2-4 distinct paragraphs minimum.
+    2. Each paragraph must focus on exactly one main idea or theme.
+    3. Use proper paragraph breaks (double line breaks) between paragraphs.
+    4. Never merge all content into a single paragraph.
+    5. Prioritize readability through clear structure over completeness.
     
     Synthesize this information into a well-structured response: {state['messages']}"""
-
     response = llm.invoke(prompt)
-
     return {
         **state,
         "endMessage": response.content
+    }
+
+# ===== ASR
+
+def asr_node(state: GraphState) -> GraphState:
+    if state["imagePath1"]:
+        prompt = f"""You are an expert in software architecture implementation evaluation.
+The user has provided the following details:
+{state["userQuestion"]}
+
+An implementation diagram is available at: {state["imagePath1"]}.
+
+Evaluate whether the implementation meets the requirements and respects the limitations mentioned in the user question.
+Provide detailed feedback and suggestions for improvement if needed.
+"""
+        result = llm.invoke(prompt)
+        message = AIMessage(content=result.content, name="asr_evaluator")
+    else:
+        prompt = f"""You are an expert in providing recommendations for software architecture.
+The user has provided the following details:
+{state["userQuestion"]}.
+
+Provide clear recommendations and a step-by-step guide on how to implement the requirement considering the limitations mentioned in the user question.
+"""
+        result = llm.invoke(prompt)
+        message = AIMessage(content=result.content, name="asr_recommender")
+    
+    return {
+        **state,
+        "messages": state["messages"] + [message],
+        "hasVisitedASR": True
     }
 
 # ========== Nodes creation 
@@ -398,6 +415,7 @@ builder.add_node("investigator", researcher_node)
 builder.add_node("creator", creator_node)
 builder.add_node("evaluator", evaluator_node)
 builder.add_node("unifier", unifier_node)
+builder.add_node("asr", asr_node)
 
 # ========== Edges creation 
 
@@ -407,6 +425,7 @@ builder.add_edge("investigator", "supervisor")
 builder.add_edge("creator", "supervisor")
 builder.add_edge("evaluator", "supervisor")
 builder.add_edge("unifier", END)
+builder.add_edge("asr", "supervisor")
 
 # ========== Graph 
 
@@ -422,19 +441,20 @@ graph_image = graph.get_graph().draw_mermaid_png()
 with open(graph_image_path, "wb") as f:
     f.write(graph_image)
 
+# Updated test invocation with correct keys:
 test = graph.invoke({
-        "messages": [] ,
-        "userQuestion": "What is add 3.0", 
-        "localQuestion": "", 
-        "hasVisitedInvestigator": False
-        , "hasVisitedDiagrams": False, 
-        "hasVisitedCreator": False, 
-        "hasVisitedEvaluator": False, 
-        "nextNode": "supervisor", 
-        "imagePath": "",
-        "endMessage": ""
-    }, config)
-
+    "messages": [],
+    "userQuestion": "What is ADD 3.0? Provide recommendations for its implementation under budget constraints.",
+    "localQuestion": "",
+    "hasVisitedInvestigator": False,
+    "hasVisitedCreator": False,
+    "hasVisitedEvaluator": False,
+    "hasVisitedASR": False,
+    "nextNode": "supervisor",
+    "imagePath1": "",  # No image provided
+    "imagePath2": "",
+    "endMessage": ""
+}, config)
 
 print(test)
 """
