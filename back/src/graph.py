@@ -39,10 +39,9 @@ class GraphState(TypedDict):
     userQuestion: str
     localQuestion: str
     hasVisitedInvestigator: bool
-    hasVisitedDiagrams: bool
     hasVisitedCreator: bool
     hasVisitedEvaluator: bool
-    nextNode: Literal["investigator", "diagrams", "creator", "evaluator", "unifier"]
+    nextNode: Literal["investigator", "creator", "evaluator", "unifier"]
     imagePath: str
     endMessage: str
 
@@ -56,7 +55,7 @@ builder = StateGraph(GraphState)
 
 class supervisorResponse(TypedDict):
     localQuestion: Annotated[str, ..., "What is the cuestion for the worker node?"]
-    nextNode: Literal["investigator", "diagrams", "creator", "evaluator", "unifier"]
+    nextNode: Literal["investigator", "creator", "evaluator", "unifier"]
 
 supervisorSchema = {
     "title": "SupervisorResponse",
@@ -70,7 +69,7 @@ supervisorSchema = {
         "nextNode": {
             "type": "string",
             "description": "The next node to act.",
-            "enum": ["investigator", "diagrams", "creator", "evaluator", "unifier"]
+            "enum": ["investigator", "creator", "evaluator", "unifier"]
         }
     },
     "required": ["setup", "nextNode"]
@@ -78,12 +77,12 @@ supervisorSchema = {
 
 # ========== Prompts 
 
+# ===== Nodes
+
 def makeSupervisorPrompt(state: GraphState) -> str:
     visited_nodes = []
     if state["hasVisitedInvestigator"]:
         visited_nodes.append("investigator")
-    if state["hasVisitedDiagrams"]:
-        visited_nodes.append("diagrams")
     if state["hasVisitedCreator"]:
         visited_nodes.append("creator")
     if state["hasVisitedEvaluator"]:
@@ -103,8 +102,14 @@ def makeSupervisorPrompt(state: GraphState) -> str:
     
     This is the user question: {state["userQuestion"]}
 
-    These are the possible outputs: ['investigator', 'diagrams', 'creator', 'evaluator', 'unifier'].
-    In cas there is nothing else to do go to unifier
+    These are the possible outputs: ['investigator', 'creator', 'evaluator', 'unifier'].
+    In case there is nothing else to do go to unifier
+
+    You also need to define a specific question for the node you send: 
+        - for the investigator node only ask for concepts or patterns in the user diagrams
+        - for the creator node ask to generate a diagram or code example
+        - for the evaluator node ask to evaluate the user's ideas, IF THE USER HAVE 2 DIAGRAMS YOU NEED TO SEND TO THIS NODE ONLY
+    always give some context in the question for the specific node
     """ 
 
     return supervisorPrompt
@@ -113,8 +118,9 @@ prompt_researcher = """You are an expert in software architecture, specializing 
     and performance. Your task is to analyze the user's question and provide an accurate and well-explained response based on your expertise. 
     You have access to two tools to assist you in answering:
 
-    - 'specialized_LLM': A powerful large language model fine-tuned for software architecture-related queries. Use this tool when you need 
+    - 'LLM': A powerful large language model fine-tuned for software architecture-related queries. Use this tool when you need 
       a detailed explanation, best practices, or general knowledge about architecture principles.
+    - 'LLMWithImages': A large language model with image support, allowing you to analyze diagrams, patterns, and visual representations
 
 """
 # TODO add rag tool
@@ -125,16 +131,6 @@ prompt_researcher = """You are an expert in software architecture, specializing 
       answers.
 """
 
-prompt_diagrams = """You are an expert in software architecture diagrams, specializing in classification, description, and extraction of relevant 
-    components. Your role is to analyze the given diagram and determine the best approach to process it based on the user's request. 
-
-    You have access to the following tools:
-
-    - 'diagram_classifier': Identifies the type of diagram (e.g., UML, C4, sequence diagram, component diagram) to determine how it should be processed.
-    - 'diagram_descriptor': Generates a textual description of the diagram, summarizing its main elements and relationships.
-    - 'diagram_extractor': Extracts detailed elements (e.g., components, connections, attributes) from the diagram for further analysis or transformation.
-    """
-
 prompt_creator ="""You are an expert in creating xml code for software architecture diagrams.
 You are working with a researcher who will tell you exactly what you should do, please follow their instructions. Limit 
 yourself to load balancing and replication. You yourself are unable to create this diagrams, but you have a tool for
@@ -144,33 +140,52 @@ evaluatorPrompt = f"""You are an expert in software architecture evaluation, spe
     the strengths and weaknesses of proposed strategies. Your role is to critically evaluate the user's request and provide a well-informed 
     assessment based on two specialized tools:
 
-    - 'feasibility_checker': Analyzes whether the proposed project, system, or architecture is viable based on technical, resource, and 
-      operational constraints.
-    - 'strategy_analyzer': Evaluates the proposed architectural strategy, listing its pros and cons to help the user make informed decisions.
+    - `Theory Tool` for correctness checks.
+    - `Viability Tool` for feasibility assessment.
+    - `Needs Tool` for requirement alignment.
+    - `Analyze Tool` for comparing two diagrams.
     """
+
+# ===== Tools
+
+llm_prompt = "Retrieve general software architecture knowledge. Answer concisely and focus on key concepts:"
+
+llmWithImages_prompt = """Analyze the diagram and provide a detailed explanation of the software architecture tactics found in the image. 
+    Focus on performance and availability tactics"""
+
+# TODO add rag tool
+
+# TODO add diagram creator tool
+
+theory_prompt = "Analyze the theoretical correctness of this architecture diagram. Follow best practices."
+
+viability_prompt = "Evaluate the feasibility of the user's ideas. Provide a detailed analysis of the viability of the proposed strategies."
+
+needs_prompt = "Analyze the user's requirements and check if they align with the proposed architecture. Focus on the user's needs."
+
+analyze_prompt = """Analyze the following pair of diagrams:
+    A class diagram representing the implementation of a component,
+    A component diagram that places this component within the architectural context.
+    Evaluate whether the component's implementation (class diagram) is properly designed to support quality attributes such as scalability and 
+    performance, among others.
+    Provide a detailed assessment highlighting strengths, deficiencies, and improvement suggestions."""
 
 # ========== Tools 
 
 # ===== Investigator
 
 @tool
-def researcher_LLM(prompt: str) -> str:
+def LLM(prompt: str) -> str:
     """This researcher is able of answering questions only about Attribute Driven Design, also known as ADD or ADD 3.0
     Remember the context is software architecture, dont confuse Attribute Driven Design with Attention-Deficit Disorder"""
 
     response = llm.invoke(prompt)
     return response
 
-# TODO add rag tool
-
-# ===== Diagrams
-
 @tool
-def diagram_describer(image_path: str) -> str:
-    """This tool is used exclusively to explain the software architecture tactics found in an imageof a diagram given by the user. 
-    Don't assume anything that is not explictly in the diagram, and focus most of all in tactics associated with performance and 
-    availability (specifically Load Balancing and Replication tactics).If there are no explicit tactics associated to this, 
-    you must say so"""
+def LLMWithImages(image_path: str) -> str:
+    """This researcher is able of answering questions about software architecture diagrams, patterns, and visual representations.
+    Remember to focus on performance and availability tactics, and always use the image as a reference"""
 
     image = Image.load_from_file(image_path)
     generative_multimodal_model = GenerativeModel("gemini-1.0-pro-vision")
@@ -182,80 +197,7 @@ def diagram_describer(image_path: str) -> str:
     ])
     return response
 
-@tool
-def diagram_classify(image_path: str) -> str:
-    """Classifies a Software Architecture Diagram from an image file path using a LLM."""
-    
-    try:
-        image = Image.load_from_file(image_path)
-        model = GenerativeModel("gemini-1.0-pro-vision")
-        
-        response = model.generate_content([
-            "What type of software architecture diagram is this? Choose one of: "
-            "Components, Deployment, Context or Class. Only return the classification not any other text.",
-            image
-        ])
-        
-        classification = response.text.strip()
-
-        if "Components" in classification:
-            return "It is a Software Architecture Components Diagram"
-        elif "Deployment" in classification:
-            return "It is a Software Architecture Deployment Diagram"
-        elif "Class" in classification:
-            return "It is a Software Architecture Class Diagram"
-        elif "Context" in classification:
-            return "It is a Software Architecture Context Diagram"
-        else:
-            return "I couldn't determine the type of diagram."
-
-    except Exception as e:
-        return f"Error during classification: {str(e)}"
-    
-@tool
-def diagram_extractor(image_path: str, diagram_type: str) -> str:
-    """Extracts structured information from a software architecture diagram.
-    
-    - If the diagram is a class diagram, it extracts:
-      - List of identified classes.
-      - Attributes of each class.
-      - Methods of each class.
-      - Relationships between classes (association, inheritance, aggregation, composition, dependency).
-      
-    - If the diagram is a component or deployment diagram, it provides:
-      - A high-level description of components or infrastructure.
-      - Focus on performance and availability tactics (load balancing, replication, etc.).
-    
-    Use this tool when analyzing UML class diagrams, component diagrams, or deployment diagrams.
-    """
-    
-    try:
-        image = Image.load_from_file(image_path)
-        model = GenerativeModel("gemini-1.0-pro-vision")
-        
-        if diagram_type.lower() == "class":
-            prompt = (
-                "Analyze this UML class diagram and extract:\n"
-                "- List of identified classes.\n"
-                "- Attributes of each class.\n"
-                "- Methods of each class.\n"
-                "- Relationships between classes (association, inheritance, aggregation, composition, dependency)."
-            )
-        else:
-            prompt = (
-                "Analyze this software architecture diagram and describe:\n"
-                "- The key components and their roles.\n"
-                "- If it is a deployment diagram, describe the infrastructure elements.\n"
-                "- Any performance or availability tactics applied (e.g., load balancing, replication)."
-            )
-        
-        response = model.generate_content([prompt, image])
-        return response.text
-
-    except Exception as e:
-        return f"Error during extraction: {str(e)}"
-    
-    
+# TODO add rag tool    
 
 # ===== Creator
 
@@ -263,37 +205,59 @@ def diagram_extractor(image_path: str, diagram_type: str) -> str:
 def diagram_creator(prompt: str) ->str:
     """This tool allows for creation of software architecture diagrams in a XML format.
     Always use this tool when the user wants to create a diagram and be really specific of what you need.
-    Here is an example of a valid query: Give me xml code of the diagram of a simple app. I want to have a message broker, connected to two interfaces. I dont have specific attributes or details, just do that"""
+    Here is an example of a valid query: Give me xml code of the diagram of a simple app. I want to have 
+    a message broker, connected to two interfaces. I dont have specific attributes or details, just do that"""
     xml_code = run_agent(prompt)
     return xml_code
 
 # ===== Evaluator
 
 @tool
-def feasibility_checker(prompt: str) -> str:
-    """This tool is able of evaluate the viability of the plans the usser suggests, it can tell if the users ideas are viable or if it needs
-    any adjusments"""
+def theory_tool(prompt: str) -> str:
+    """This evaluator is able to check the theoretical correctness of the architecture diagram. It follows best practices and provides a detailed analysis."""
 
-    response = llm.invoke(prompt)
+    response = llm.invoke(theory_prompt + prompt)
     return response
 
 @tool
-def strategy_analyzer(prompt: str) -> str:
-    """This tools is able judge the pros and cons of the user's ideas, it is able to give a detailed analysis of the user's ideas
-    and give a detailed analysis of the pros and cons of the user's ideas"""
+def viability_tool(prompt: str) -> str:
+    """This evaluator is able to check the feasibility of the user's ideas. It provides a detailed analysis of the viability of the proposed strategies."""
 
-    response = llm.invoke(prompt)
+    response = llm.invoke(viability_prompt + prompt)
+    return response
+
+@tool
+def needs_tool(prompt: str) -> str:
+    """This evaluator is able to check the user's requirements and verify if they align with the proposed architecture. It focuses on the user's needs."""
+
+    response = llm.invoke(needs_prompt + prompt)
+    return response
+
+@tool
+def analyze_tool(image_path: str, image_path2: str) -> str:
+    """This evaluator is able to compare two diagrams: a class diagram representing the implementation 
+    of a component and a component diagram that places this component within the architectural context. 
+    It evaluates whether the component's implementation (class diagram) is properly designed to support 
+    quality attributes such as scalability and performance, among others. It provides a detailed assessment 
+    highlighting strengths, deficiencies, and improvement suggestions."""
+
+    image = Image.load_from_file(image_path)
+    image2 = Image.load_from_file(image_path2)
+    generative_multimodal_model = GenerativeModel("gemini-1.0-pro-vision")
+    response = generative_multimodal_model.generate_content([
+        analyze_prompt,
+        image,
+        image2
+    ])
     return response
 
 # ========== Router 
 
-def router(state: GraphState) -> Literal["investigator", "diagrams", "creator", "evaluator", "unifier"]:
+def router(state: GraphState) -> Literal["investigator", "creator", "evaluator", "unifier"]:
     if state["nextNode"] == "unifier":
         return "unifier"
     elif state["nextNode"] == "investigator" and not state["hasVisitedInvestigator"]:
         return "investigator"
-    elif state["nextNode"] == "diagrams" and not state["hasVisitedDiagrams"]:
-        return "diagrams"
     elif state["nextNode"] == "creator" and not state["hasVisitedCreator"]:
         return "creator"
     elif state["nextNode"] == "evaluator" and not state["hasVisitedEvaluator"]:
@@ -322,7 +286,7 @@ def supervisor_node(state: GraphState):
 
 # ===== Investigator
     
-researcher_agent = create_react_agent(llm, tools=[researcher_LLM],state_modifier=prompt_researcher)
+researcher_agent = create_react_agent(llm, tools=[LLM, LLMWithImages],state_modifier=prompt_researcher)
 
 def researcher_node(state: GraphState) -> GraphState:
     result = researcher_agent.invoke(
@@ -338,26 +302,6 @@ def researcher_node(state: GraphState) -> GraphState:
         **state,
         "messages": [AIMessage(content=msg.content, name="researcher") for msg in result["messages"]],
         "hasVisitedInvestigator": True
-    }
-
-# ===== Diagrams
-
-diagrams_agent = create_react_agent(llm, tools=[diagram_classify, diagram_extractor, diagram_describer], state_modifier=prompt_diagrams)
-
-def diagrams_node(state: GraphState) -> GraphState:
-    result = diagrams_agent.invoke(
-        {
-            "messages": state["messages"],
-            "userQuestion": state["userQuestion"],
-            "localQuestion": state["localQuestion"],
-            "imagePath": state["imagePath"]
-        }
-    )
-
-    return {
-        **state,
-        "messages": [AIMessage(content=msg.content, name="diagrams") for msg in result["messages"]],
-        "hasVisitedDiagrams": True
     }
 
 # ===== Creator
@@ -382,7 +326,7 @@ def creator_node(state: GraphState) -> GraphState:
 
 # ===== Evaluator
 
-evaluator_agent = create_react_agent(llm, tools=[feasibility_checker, strategy_analyzer], state_modifier=evaluatorPrompt)
+evaluator_agent = create_react_agent(llm, tools=[theory_tool, viability_tool, needs_tool], state_modifier=evaluatorPrompt)
 
 def evaluator_node(state: GraphState) -> GraphState:
     result = evaluator_agent.invoke(
@@ -419,7 +363,6 @@ def unifier_node(state: GraphState) -> GraphState:
 
 builder.add_node("supervisor", supervisor_node)
 builder.add_node("investigator", researcher_node)
-builder.add_node("diagrams", diagrams_node)
 builder.add_node("creator", creator_node)
 builder.add_node("evaluator", evaluator_node)
 builder.add_node("unifier", unifier_node)
@@ -429,7 +372,6 @@ builder.add_node("unifier", unifier_node)
 builder.add_edge(START, "supervisor")
 builder.add_conditional_edges("supervisor", router)
 builder.add_edge("investigator", "supervisor")
-builder.add_edge("diagrams", "supervisor")
 builder.add_edge("creator", "supervisor")
 builder.add_edge("evaluator", "supervisor")
 builder.add_edge("unifier", END)

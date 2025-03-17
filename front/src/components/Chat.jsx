@@ -16,7 +16,7 @@ export default function Chat() {
         const formData = new FormData();
         formData.append("message", input);
 
-        fetch("http://localhost:8000/message", {
+        fetch("http://localhost:8000/test", {
             method: "POST",
             body: formData,
         })
@@ -64,6 +64,7 @@ export default function Chat() {
             {/* Barra de Entrada */}
             <Box className="input-container">
                 <TextField
+                    className="input-field"
                     fullWidth
                     variant="outlined"
                     placeholder="Escribe un mensaje..."
@@ -71,13 +72,12 @@ export default function Chat() {
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                 />
-                <Button variant="contained" color="primary" onClick={sendMessage}>
+                <Button className="send-button" variant="contained" onClick={sendMessage}>
                     Enviar
                 </Button>
             </Box>
 
-            {/* Modal para Mostrar Internal Messages */}
-            <Dialog open={openDialog} onClose={() => setOpenDialog(false)}>
+            <Dialog className="nodes-dialog" open={openDialog} onClose={() => setOpenDialog(false)}>
                 <DialogTitle>Mensajes Internos</DialogTitle>
                 <DialogContent>
                     <List>

@@ -1,9 +1,9 @@
 .app-bar {
-    background: rgb(26, 26, 26) ;
+    background: #171717 !important;
 }
   
 .menu-button {
-    color: rgb(255, 255, 255); 
+    color: rgb(255, 255, 255) !important; 
     margin: 16px;
 }
   

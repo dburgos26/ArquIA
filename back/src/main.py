@@ -30,9 +30,16 @@ async def message(message: str = Form(...), file: Optional[UploadFile] = File(No
             content = await file.read()
             image_file.write(content)
 
+    messageList = [{"role": "user", "content": message}]
+
+    if image_path:
+        messageList.append({"role": "user", "content": "this is the image path: " + image_path})
+
+    
+
     # Prepare the input for the graph
     response = graph.invoke({
-        "messages": [{"role": "user", "content": message}, {"role": "user", "content": "this is the image path: " + image_path}],
+        "messages": messageList,
         "userQuestion": message,
         "localQuestion": "",
         "hasVisitedInvestigator": False,
