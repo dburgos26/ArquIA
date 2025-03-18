@@ -107,17 +107,18 @@ def makeSupervisorPrompt(state: GraphState) -> str:
     Visited nodes so far: {visited_nodes_str}.
     
     This is the user question: {state["userQuestion"]}
-
-    The ASR and limitations can be found in the user question.
     
     The possible outputs: ['investigator', 'creator', 'evaluator', 'asr', 'unifier'].
+
     In case there is nothing else to do go to unifier.
     
     You also need to define a specific question for the node you send:
       - For the investigator node: ask for concepts or patterns in the user diagrams.
       - For the creator node: ask to generate a diagram or code example.
+      - **For the ASR node: always prioritize it if the user provides an ASR and limitations in the question.**
+        - If no diagram is provided, ask for recommendations on how to implement the ASR given the limitations.  
+        - If a diagram is provided, ask to evaluate whether the implementation meets the ASR and adheres to the limitations.
       - For the evaluator node: ask to evaluate the user's ideas, especially if two diagrams are provided.
-      - For the ASR node: if no diagram is provided, ask for recommendations on how to implement the ASR given the limitations; if a diagram is provided, ask to evaluate whether the implementation meets the ASR and adheres to the limitations.
     
     NOTE: YOU CANNOT GO DIRECTLY TO THE UNIFIER NODE; you must go to at least one worker node before.
     """
