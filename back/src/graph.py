@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 import os
 from dotenv import load_dotenv, find_dotenv
 from src.diagramCreator import run_agent
+import re
 
 # langchain
 from langchain_core.tools import tool
@@ -46,6 +47,7 @@ class GraphState(TypedDict):
     imagePath2: str
     endMessage: str
     hasVisitedASR: bool 
+    mermaidCode: str
 
 class AgentState(TypedDict):
     messages: list
@@ -155,6 +157,7 @@ def makeSupervisorPrompt(state: GraphState) -> str:
     - If the user just asks about ADD, use the investigator.
     - If the user wants to extract or describe a diagram, first classify or extract the diagram elements.
     - If the user provides an ASR and limitations (and optionally an image of an implementation), route to the ASR node.
+    - If the user wants a diagram, route to the creator node.
     
     Visited nodes so far: {visited_nodes_str}.
     
@@ -193,11 +196,8 @@ prompt_researcher = """You are an expert in software architecture, specializing 
       answers.
 """
 
-prompt_creator ="""You are an expert in creating xml code for software architecture diagrams.
-You are working with a researcher who will tell you exactly what you should do, please follow their instructions. Limit 
-yourself to load balancing and replication. You yourself are unable to create this diagrams, but you have a tool for
-this purpose named diagramCreator. Always use this tool when the user asks for creation, modifications, or additions to the diagram.
-"""
+prompt_creator =base_prompt = """you are an expert in mermade diagrams and IT architecture, you will be given a prompt 
+and you will generate the mermade diagram for it."""
 
 def getEvaluatorPrompt(image_path1: str, image_path2) -> str:
     image1 = ""
@@ -271,17 +271,6 @@ def LLMWithImages(image_path: str) -> str:
     return response
 
 # TODO add rag tool    
-
-# ===== Creator
-
-@tool
-def diagram_creator(prompt: str) -> str:
-    """This tool allows for creation of software architecture diagrams in an XML format.
-    Always use this tool when the user wants to create a diagram and be really specific about what you need.
-    Here is an example of a valid query: Give me XML code of the diagram of a simple app. I want to have 
-    a message broker connected to two interfaces. I don't have specific attributes or details; just do that."""
-    xml_code = run_agent(prompt)
-    return xml_code
 
 # ===== Evaluator
 
@@ -374,19 +363,18 @@ def researcher_node(state: GraphState) -> GraphState:
 
 # ===== Creator
 
-creator_agent = create_react_agent(llm, tools=[diagram_creator], state_modifier=prompt_creator)
-
 def creator_node(state: GraphState) -> GraphState:
-    result = creator_agent.invoke({
-        "messages": state["messages"],
-        "userQuestion": state["userQuestion"],
-        "localQuestion": state["localQuestion"],
-        "imagePath1": state["imagePath1"],
-        "imagePath2": state["imagePath2"]
-    })
+    
+    response = llm.invoke(prompt_creator + state["userQuestion"])
+
+    match = re.search(r"```mermaid\n(.*?)```", response.content, re.DOTALL)
+    if match:
+        mermaid_code = match.group(1)
+
     return {
         **state,
-        "messages": state["messages"] + [AIMessage(content=msg.content, name="creator") for msg in result["messages"]],
+        "messages": state["messages"] + [response],
+        "mermaidCode": mermaid_code,
         "hasVisitedCreator": True
     }
 
@@ -422,6 +410,7 @@ def unifier_node(state: GraphState) -> GraphState:
     3. Use proper paragraph breaks (double line breaks) between paragraphs.
     4. Never merge all content into a single paragraph.
     5. Prioritize readability through clear structure over completeness.
+    6. NEVER add mermaid code to the last message. there is another way to show the diagram to the user.
     
     Synthesize this information into a well-structured response: {state['messages']}"""
     response = llm.invoke(prompt)

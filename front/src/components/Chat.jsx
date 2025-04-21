@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import MermaidChart from "./MermaidChart";
 import { Box, Paper, List, ListItem, TextField, Button, Typography, Dialog, DialogTitle, DialogContent, ListItemText, IconButton, Badge, Chip, Stack } from "@mui/material";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
 import CloseIcon from "@mui/icons-material/Close";
@@ -38,7 +39,7 @@ export default function Chat() {
             .then((data) => {
                 setMessages((prev) => [
                     ...prev,
-                    { sender: "respuesta", text: data.endMessage, internal_messages: data.messages },
+                    { sender: "respuesta", text: data.endMessage, internal_messages: data.messages, mermaidCode: data.mermaidCode },
                 ]);
             })
             .catch((error) => {
@@ -99,6 +100,14 @@ export default function Chat() {
                                 <Typography variant="body1" sx={{ color: "white", whiteSpace: "pre-wrap"  }}>
                                     {msg.text}
                                 </Typography>
+
+                                {/* Display mermaid code */}
+                                {msg.mermaidCode && (
+                                    <Box sx={{ mt: 2 }}>
+                                        <p>Diagrama:</p>
+                                        <MermaidChart chart={msg.mermaidCode} />
+                                    </Box>
+                                )}
 
                                 {/* Display attached images in messages */}
                                 {msg.images && msg.images.length > 0 && (

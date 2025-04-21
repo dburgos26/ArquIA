@@ -1,0 +1,31 @@
+.mermaid-container {
+    overflow: visible; /* Changed from hidden to visible */
+    position: relative;
+  }
+  
+  .mermaid-chart {
+    display: block !important; /* Force display */
+    visibility: visible !important; /* Force visibility */
+  }
+  
+  .mermaid-chart svg {
+    max-width: 100%;
+    display: block !important; /* Force display */
+    visibility: visible !important; /* Force visibility */
+  }
+  
+  /* Make sure dark theme elements are visible */
+  .mermaid-chart .label {
+    color: white !important;
+    fill: white !important;
+  }
+  
+  .mermaid-chart .node rect, 
+  .mermaid-chart .node circle, 
+  .mermaid-chart .node polygon {
+    stroke: white !important;
+  }
+  
+  .mermaid-chart .edgePath .path {
+    stroke: white !important;
+  }

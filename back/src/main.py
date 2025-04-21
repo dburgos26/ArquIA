@@ -60,7 +60,8 @@ async def message(message: str = Form(...), image1: Optional[UploadFile] = File(
         "nextNode": "supervisor",
         "imagePath1": image_path1,
         "imagePath2": image_path2,
-        "endMessage": ""
+        "endMessage": "",
+        "mermaidCode": ""
     }, config)
 
     return response
@@ -76,5 +77,5 @@ async def test_endpoint(message: str = Form(...), file: UploadFile = File(None))
     user_input = message + " " + image_path if image_path else message
     messages = [user_input]
 
-    return {"last_message": "this is a response to " + user_input, "messages": [{"name": "Supervisor", "text": "Mensaje del supervisor"}, {"name": "reasercher", "text": "Mensaje del investigador"}]}
+    return {"mermaidCode": "classDiagram\n    class Bank {\n        +String name\n        +String address\n        +List~Branch~ branches\n        +createAccount(Customer, double) Account\n        +closeAccount(Account) void\n    }\n\n    class Branch {\n        +String name\n        +String location\n        +List~Customer~ customers\n        +List~Account~ accounts\n        +addCustomer(Customer) void\n        +removeCustomer(Customer) void\n    }\n\n    class Customer {\n        +String name\n        +String address\n        +String phoneNumber\n        +String email\n        +List~Account~ accounts\n        +openAccount(double) Account\n        +closeAccount(Account) void\n    }\n\n    class Account {\n        +String accountNumber\n        +double balance\n        +AccountType accountType\n        +deposit(double) void\n        +withdraw(double) void\n        +getBalance() double\n    }\n\n    class AccountType {\n        <<enumeration>>\n        CHECKING\n        SAVINGS\n        BUSINESS\n    }\n\n    Bank \"1\" --> \"0..*\" Branch\n    Branch \"1\" --> \"0..*\" Customer\n    Customer \"1\" --> \"0..*\" Account\n    Account \"1\" --> \"1\" AccountType\n", "endMessage": "this is a response to " + user_input, "messages": [{"name": "Supervisor", "text": "Mensaje del supervisor"}, {"name": "reasercher", "text": "Mensaje del investigador"}]}
 
