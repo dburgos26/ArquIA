@@ -442,6 +442,7 @@ def asr_node(state: GraphState) -> GraphState:
 
             Evaluate whether the implementation meets the requirements and respects the limitations mentioned in the user question.
             Provide detailed feedback and suggestions for improvement if needed.
+            Also it is **IMPORTANT** to analize the implementation of architectural tactics in the user diagram. If there are no architectural tactics in the diagram, please recommend which architectural tactics can be applied.
             """
         result = llm.invoke(prompt)
         message = AIMessage(content=result.content, name="asr_evaluator")
@@ -451,6 +452,7 @@ def asr_node(state: GraphState) -> GraphState:
             {state["userQuestion"]}.
 
             Provide clear recommendations and a step-by-step guide on how to implement the requirement considering the limitations mentioned in the user question.
+            It is **IMPORTANT** that in the answer you mention architectural tactics that are important in the implementation of ASR.
             """
         result = llm.invoke(prompt)
         message = AIMessage(content=result.content, name="asr_recommender")
