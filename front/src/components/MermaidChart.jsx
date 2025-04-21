@@ -11,11 +11,29 @@ const MermaidChart = ({ chart }) => {
     // Only initialize mermaid once
     if (!window.mermaidInitialized) {
       mermaid.initialize({
-        startOnLoad: false, // Changed to false to have more control
+        startOnLoad: false,
         theme: 'dark',
         securityLevel: 'loose',
         fontFamily: 'monospace',
         fontSize: 16,
+        themeVariables: {
+          // Customize theme to ensure text is always readable against backgrounds
+          primaryTextColor: '#ffffff',
+          primaryColor: '#434857',
+          primaryBorderColor: '#ffffff',
+          lineColor: '#d3d3d3',
+          secondaryColor: '#2a3052',
+          tertiaryColor: '#1a1a2e',
+          // Ensure text has dark color on light backgrounds
+          nodeBorder: '#ffffff',
+          clusterBkg: '#23283d',
+          clusterBorder: '#ffffff',
+          defaultLinkColor: '#d3d3d3',
+          titleColor: '#ffffff',
+          edgeLabelBackground: '#23283d',
+          // Ensure node text is dark on light backgrounds
+          nodeTextColor: '#1a1a1a'
+        }
       });
       window.mermaidInitialized = true;
     }
