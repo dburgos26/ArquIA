@@ -104,7 +104,6 @@ export default function Chat() {
                                 {/* Display mermaid code */}
                                 {msg.mermaidCode && (
                                     <Box sx={{ mt: 2 }}>
-                                        <p>Diagrama:</p>
                                         <MermaidChart chart={msg.mermaidCode} />
                                     </Box>
                                 )}
