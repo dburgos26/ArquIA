@@ -78,6 +78,58 @@ supervisorSchema = {
     "required": ["localQuestion", "nextNode"]
 }
 
+class evaluatorResponse(TypedDict):
+    positiveAspects: Annotated[str, ..., "What are the positive aspects of the user's idea?"]
+    negativeAspects: Annotated[str, ..., "What are the negative aspects of the user's idea?"]
+    suggestions: Annotated[str, ..., "What are the suggestions for improvement?"]
+
+evaluatorSchema = {
+    "title": "EvaluatorResponse",
+    "description": "Response from the evaluator indicating the positive and negative aspects of the user's idea.",
+    "type": "object",
+    "properties": {
+        "positiveAspects": {
+            "type": "string",
+            "description": "What are the positive aspects of the user's idea?"
+        },
+        "negativeAspects": {
+            "type": "string",
+            "description": "What are the negative aspects of the user's idea?"
+        },
+        "suggestions": {
+            "type": "string",
+            "description": "What are the suggestions for improvement?"
+        }
+    },
+    "required": ["positiveAspects", "negativeAspects", "suggestions"]
+}
+
+class investigatorResponse(TypedDict):
+    definition: Annotated[str, ..., "What is the definition of the concept?"]
+    useCases: Annotated[str, ..., "What are the use cases of the concept?"]
+    examples: Annotated[str, ..., "What are the examples of the concept?"]
+
+investigatorSchema = {
+    "title": "InvestigatorResponse",
+    "description": "Response from the investigator indicating the definition, use cases, and examples of the concept.",
+    "type": "object",
+    "properties": {
+        "definition": {
+            "type": "string",
+            "description": "What is the definition of the concept?"
+        },
+        "useCases": {
+            "type": "string",
+            "description": "What are the use cases of the concept?"
+        },
+        "examples": {
+            "type": "string",
+            "description": "What are the examples of the concept?"
+        }
+    },
+    "required": ["definition", "useCases", "examples"]
+}
+
 # ========== Prompts 
 
 # ===== Nodes
@@ -201,7 +253,7 @@ analyze_prompt = """Analyze the following pair of diagrams:
 def LLM(prompt: str) -> str:
     """This researcher is able of answering questions only about Attribute Driven Design, also known as ADD or ADD 3.0.
     Remember the context is software architecture, don't confuse Attribute Driven Design with Attention-Deficit Disorder."""
-    response = llm.invoke(prompt)
+    response = llm.with_structured_output(investigatorSchema).invoke(prompt)
     return response
 
 @tool
@@ -236,19 +288,19 @@ def diagram_creator(prompt: str) -> str:
 @tool
 def theory_tool(prompt: str) -> str:
     """This evaluator is able to check the theoretical correctness of the architecture diagram. It follows best practices and provides a detailed analysis."""
-    response = llm.invoke(theory_prompt + prompt)
+    response = llm.with_structured_output(evaluatorSchema).invoke(theory_prompt + prompt)
     return response
 
 @tool
 def viability_tool(prompt: str) -> str:
     """This evaluator is able to check the feasibility of the user's ideas. It provides a detailed analysis of the viability of the proposed strategies."""
-    response = llm.invoke(viability_prompt + prompt)
+    response = llm.with_structured_output(evaluatorSchema).invoke(viability_prompt + prompt)
     return response
 
 @tool
 def needs_tool(prompt: str) -> str:
     """This evaluator is able to check the user's requirements and verify if they align with the proposed architecture. It focuses on the user's needs."""
-    response = llm.invoke(needs_prompt + prompt)
+    response = llm.with_structured_output(evaluatorSchema).invoke(needs_prompt + prompt)
     return response
 
 @tool
@@ -383,23 +435,23 @@ def unifier_node(state: GraphState) -> GraphState:
 def asr_node(state: GraphState) -> GraphState:
     if state["imagePath1"]:
         prompt = f"""You are an expert in software architecture implementation evaluation.
-The user has provided the following details:
-{state["userQuestion"]}
+            The user has provided the following details:
+            {state["userQuestion"]}
 
-An implementation diagram is available at: {state["imagePath1"]}.
+            An implementation diagram is available at: {state["imagePath1"]}.
 
-Evaluate whether the implementation meets the requirements and respects the limitations mentioned in the user question.
-Provide detailed feedback and suggestions for improvement if needed.
-"""
+            Evaluate whether the implementation meets the requirements and respects the limitations mentioned in the user question.
+            Provide detailed feedback and suggestions for improvement if needed.
+            """
         result = llm.invoke(prompt)
         message = AIMessage(content=result.content, name="asr_evaluator")
     else:
         prompt = f"""You are an expert in providing recommendations for software architecture.
-The user has provided the following details:
-{state["userQuestion"]}.
+            The user has provided the following details:
+            {state["userQuestion"]}.
 
-Provide clear recommendations and a step-by-step guide on how to implement the requirement considering the limitations mentioned in the user question.
-"""
+            Provide clear recommendations and a step-by-step guide on how to implement the requirement considering the limitations mentioned in the user question.
+            """
         result = llm.invoke(prompt)
         message = AIMessage(content=result.content, name="asr_recommender")
     
