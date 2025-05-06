@@ -5,8 +5,8 @@ from typing_extensions import TypedDict
 from typing import Annotated, Literal
 import os
 from dotenv import load_dotenv, find_dotenv
-from src.diagramCreator import run_agent
 import re
+import sqlite3
 
 # langchain
 from langchain_core.tools import tool
@@ -16,6 +16,10 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.graph import StateGraph, MessagesState, START, END
+
+#from langgraph.checkpoint.postgres import PostgresSaver
+
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 # GCP
 from vertexai.generative_models import GenerativeModel
@@ -32,6 +36,10 @@ endpoint_id = os.getenv('ENDPOINT_ID')
 endpoint_id2 = os.getenv('ENDPOINT_ID2')
 
 memory = MemorySaver()
+
+db_path = "state_db/example.db"
+conn = sqlite3.connect(db_path, check_same_thread=False)
+sqlite_saver = SqliteSaver(conn)
 
 llm = ChatOpenAI(model="gpt-4o")
 
@@ -223,7 +231,7 @@ def getEvaluatorPrompt(image_path1: str, image_path2) -> str:
 
 # ===== Tools
 
-llm_prompt = "Retrieve general software architecture knowledge. Answer concisely and focus on key concepts:"
+llm_prompt = "Retrieve general software architecture knowledge. Answer concisely and focus on key concepts: fill the 3 sections of the anwser allways: [definition, useCases, examples]"
 
 llmWithImages_prompt = """Analyze the diagram and provide a detailed explanation of the software architecture tactics found in the image. 
     Focus on performance and availability tactics."""
@@ -473,7 +481,7 @@ builder.add_edge("asr", "supervisor")
 
 # ========== Graph 
 
-graph = builder.compile(checkpointer=memory)
+graph = builder.compile(checkpointer=sqlite_saver)
 
 """
 config = {"configurable": {"thread_id": "1"}}
