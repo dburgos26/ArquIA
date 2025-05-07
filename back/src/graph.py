@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv, find_dotenv
 import re
 import sqlite3
+from src.rag_agent import get_retriever
 
 # langchain
 from langchain_core.tools import tool
@@ -140,6 +141,8 @@ investigatorSchema = {
     "required": ["definition", "useCases", "examples"]
 }
 
+retriever = get_retriever()
+
 # ========== Prompts 
 
 # ===== Nodes
@@ -193,18 +196,12 @@ prompt_researcher = """You are an expert in software architecture, specializing 
 
     - 'LLM': A powerful large language model fine-tuned for software architecture-related queries. Use this tool when you need 
       a detailed explanation, best practices, or general knowledge about architecture principles.
-    - 'LLMWithImages': A large language model with image support, allowing you to analyze diagrams, patterns, and visual representations
-
-"""
-# TODO add rag tool
-"""
-    
+    - 'LLMWithImages': A large language model with image support, allowing you to analyze diagrams, patterns, and visual representations    
     - 'local_RAG': A local Retrieval-Augmented Generation (RAG) system with access to a curated knowledge base of software architecture 
-      documentation, case studies, and academic papers. Use this tool when you need precise, contextually relevant, or document-backed 
-      answers.
+      documentation, use this tool when you need to retrieve information about performance and scalability
 """
 
-prompt_creator =base_prompt = """you are an expert in mermade diagrams and IT architecture, you will be given a prompt 
+prompt_creator = """you are an expert in mermade diagrams and IT architecture, you will be given a prompt 
 and you will generate the mermade diagram for it."""
 
 def getEvaluatorPrompt(image_path1: str, image_path2) -> str:
@@ -236,9 +233,7 @@ llm_prompt = "Retrieve general software architecture knowledge. Answer concisely
 llmWithImages_prompt = """Analyze the diagram and provide a detailed explanation of the software architecture tactics found in the image. 
     Focus on performance and availability tactics."""
 
-# TODO add rag tool
-
-# TODO add diagram creator tool
+rag_prompt = "retrieve information about scalability and performance. There is information about the definition, patterns and tactics with examples."
 
 theory_prompt = "Analyze the theoretical correctness of this architecture diagram. Follow best practices."
 
@@ -278,7 +273,11 @@ def LLMWithImages(image_path: str) -> str:
     ])
     return response
 
-# TODO add rag tool    
+@tool
+def local_RAG(prompt: str) -> str:
+    """This researcher is able of answering questions about software architecture, but only about performance and scalability."""
+    response = retriever.invoke(prompt)
+    return response
 
 # ===== Evaluator
 
@@ -353,7 +352,7 @@ def supervisor_node(state: GraphState):
 
 # ===== Investigator
     
-researcher_agent = create_react_agent(llm, tools=[LLM, LLMWithImages], state_modifier=prompt_researcher)
+researcher_agent = create_react_agent(llm, tools=[LLM, LLMWithImages, local_RAG], state_modifier=prompt_researcher)
 
 def researcher_node(state: GraphState) -> GraphState:
     result = researcher_agent.invoke({
@@ -376,6 +375,7 @@ def creator_node(state: GraphState) -> GraphState:
     response = llm.invoke(prompt_creator + state["userQuestion"])
 
     match = re.search(r"```mermaid\n(.*?)```", response.content, re.DOTALL)
+    mermaid_code = ""
     if match:
         mermaid_code = match.group(1)
 

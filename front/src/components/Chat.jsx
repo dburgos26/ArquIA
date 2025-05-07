@@ -4,6 +4,8 @@ import { Box, Paper, List, ListItem, TextField, Button, Typography, Dialog, Dial
 import AttachFileIcon from "@mui/icons-material/AttachFile";
 import CloseIcon from "@mui/icons-material/Close";
 import ImageIcon from "@mui/icons-material/Image";
+import ThumbUpIcon from "@mui/icons-material/ThumbUp";
+import ThumbDownIcon from "@mui/icons-material/ThumbDown";
 
 import "../styles/chat.css";
 
@@ -27,6 +29,7 @@ export default function Chat() {
         // Create FormData with message and images
         const formData = new FormData();
         formData.append("message", input);
+        formData.append("session_id", "2")
         attachedImages.forEach((img, index) => {
             formData.append(`image${index + 1}`, img.file);
         });
@@ -39,7 +42,7 @@ export default function Chat() {
             .then((data) => {
                 setMessages((prev) => [
                     ...prev,
-                    { sender: "respuesta", text: data.endMessage, internal_messages: data.messages, mermaidCode: data.mermaidCode },
+                    { sender: "respuesta", text: data.endMessage, internal_messages: data.messages, mermaidCode: data.mermaidCode, session_id: data.session_id, message_id: data.message_id},
                 ]);
             })
             .catch((error) => {
@@ -50,40 +53,72 @@ export default function Chat() {
         setAttachedImages([]);
     };
 
+    const handleThumbClick = (session_id, message_id, thumbs_up, thumbs_down) => {
+        const formdata = new FormData();
+        formdata.append("session_id", session_id);
+        formdata.append("message_id", message_id);
+        formdata.append("thumbs_up", thumbs_up);
+        formdata.append("thumbs_down", thumbs_down);
+    
+        fetch("http://localhost:8000/feedback", {
+            method: "POST",
+            body: formdata,
+        })
+    };
+    
     const handleResponseClick = (internalMessages) => {
         if (internalMessages && internalMessages.length > 0) {
             setSelectedInternalMessages(internalMessages);
             setOpenDialog(true);
         }
     };
-
+    
     const handleImageUpload = (e) => {
         const files = Array.from(e.target.files);
-
+    
         // Limit to 2 images total
         if (files.length + attachedImages.length > 2) {
             alert("Solo puedes adjuntar hasta 2 imágenes.");
             return;
         }
-
+    
         const newImages = files.map(file => ({
             file,
             preview: URL.createObjectURL(file),
             name: file.name
         }));
-
+    
         setAttachedImages([...attachedImages, ...newImages]);
-
+    
         // Reset file input
         if (fileInputRef.current) {
             fileInputRef.current.value = "";
         }
     };
-
+    
     const removeImage = (indexToRemove) => {
         setAttachedImages(attachedImages.filter((_, index) => index !== indexToRemove));
     };
-
+    
+    // Add state for tracking rated messages
+    const [ratedMessages, setRatedMessages] = useState(new Set());
+    
+    // Function to handle rating and prevent double-rating
+    const handleRating = (sessionId, messageId, isThumbsUp, msg) => {
+        console.log(msg)
+        if (ratedMessages.has(`${sessionId}-${messageId}`)) {
+            return; // Already rated
+        }
+        
+        // Update state to mark this message as rated
+        const newRatedMessages = new Set(ratedMessages);
+        newRatedMessages.add(`${sessionId}-${messageId}`);
+        setRatedMessages(newRatedMessages);
+        
+        // Call the existing thumb click handler
+        handleThumbClick(sessionId, messageId, isThumbsUp ? 1 : 0, isThumbsUp ? 0 : 1);
+    };
+    
     return (
         <Box className="chat-container">
             {/* Lista de Mensajes */}
@@ -97,17 +132,17 @@ export default function Chat() {
                             style={{ cursor: msg.sender === "respuesta" ? "pointer" : "default" }}
                         >
                             <Box sx={{ width: "100%" }}>
-                                <Typography variant="body1" sx={{ color: "white", whiteSpace: "pre-wrap"  }}>
+                                <Typography variant="body1" sx={{ color: "white", whiteSpace: "pre-wrap" }}>
                                     {msg.text}
                                 </Typography>
-
+    
                                 {/* Display mermaid code */}
                                 {msg.mermaidCode && (
                                     <Box sx={{ mt: 2 }}>
                                         <MermaidChart chart={msg.mermaidCode} />
                                     </Box>
                                 )}
-
+    
                                 {/* Display attached images in messages */}
                                 {msg.images && msg.images.length > 0 && (
                                     <Box className="image-container">
@@ -122,12 +157,63 @@ export default function Chat() {
                                         ))}
                                     </Box>
                                 )}
+                                
+                                {/* Rating buttons - only show for bot messages and if they have a message_id */}
+                                {msg.sender === "respuesta" && (
+                                    <Box 
+                                        sx={{ 
+                                            display: 'flex', 
+                                            justifyContent: 'flex-end', 
+                                            mt: 1,
+                                            opacity: ratedMessages.has(`${msg.session_id}-${msg.message_id}`) ? 0.5 : 1
+                                        }}
+                                    >
+                                        <Typography 
+                                            variant="caption" 
+                                            sx={{ 
+                                                color: 'rgba(255,255,255,0.7)', 
+                                                mr: 1, 
+                                                alignSelf: 'center' 
+                                            }}
+                                        >
+                                            ¿Fue útil esta respuesta?
+                                        </Typography>
+                                        <IconButton 
+                                            size="small" 
+                                            onClick={(e) => {
+                                                e.stopPropagation(); // Prevent triggering the ListItem click
+                                                handleRating(msg.session_id, msg.message_id, true, msg);
+                                            }}
+                                            disabled={ratedMessages.has(`${msg.session_id}-${msg.message_id}`)}
+                                            sx={{ 
+                                                color: 'rgba(255,255,255,0.7)',
+                                                '&:hover': { color: '#4caf50' }
+                                            }}
+                                        >
+                                            <ThumbUpIcon fontSize="small" />
+                                        </IconButton>
+                                        <IconButton 
+                                            size="small" 
+                                            onClick={(e) => {
+                                                e.stopPropagation(); // Prevent triggering the ListItem click
+                                                handleRating(msg.session_id, msg.message_id, false, msg);
+                                            }}
+                                            disabled={ratedMessages.has(`${msg.session_id}-${msg.message_id}`)}
+                                            sx={{ 
+                                                color: 'rgba(255,255,255,0.7)',
+                                                '&:hover': { color: '#f44336' }
+                                            }}
+                                        >
+                                            <ThumbDownIcon fontSize="small" />
+                                        </IconButton>
+                                    </Box>
+                                )}
                             </Box>
                         </ListItem>
                     ))}
                 </List>
             </Paper>
-
+    
             {/* Image preview chips */}
             {attachedImages.length > 0 && (
                 <Stack
@@ -156,7 +242,7 @@ export default function Chat() {
                     ))}
                 </Stack>
             )}
-
+    
             {/* Barra de Entrada */}
             <Box className="input-container">
                 <TextField
@@ -193,7 +279,7 @@ export default function Chat() {
                     Enviar
                 </Button>
             </Box>
-
+    
             <Dialog className="nodes-dialog" open={openDialog} onClose={() => setOpenDialog(false)}>
                 <DialogTitle>
                     Mensajes Internos
