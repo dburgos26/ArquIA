@@ -6,7 +6,6 @@ import sqlite3
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
-config = {"configurable": {"thread_id": "2"}}
 
 app.add_middleware(
     CORSMiddleware,
@@ -75,6 +74,8 @@ async def message(
 
     if image_path2:
         messageList.append({"role": "user", "content": "this is the second image path: " + image_path2})
+
+    config = {"configurable": {"thread_id": str(session_id)}}
 
     # Prepare the input for the graph
     response = graph.invoke({

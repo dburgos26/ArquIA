@@ -2,6 +2,7 @@
 
 # Util
 from typing_extensions import TypedDict
+from typing import Annotated
 from typing import Annotated, Literal
 import os
 from dotenv import load_dotenv, find_dotenv
@@ -21,6 +22,9 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 #from langgraph.checkpoint.postgres import PostgresSaver
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+
+from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
 
 # GCP
 from vertexai.generative_models import GenerativeModel
@@ -45,7 +49,7 @@ sqlite_saver = SqliteSaver(conn)
 llm = ChatOpenAI(model="gpt-4o")
 
 class GraphState(TypedDict):
-    messages: list
+    messages: Annotated[list[AnyMessage], add_messages]
     userQuestion: str
     localQuestion: str
     hasVisitedInvestigator: bool

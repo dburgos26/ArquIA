@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import MermaidChart from "./MermaidChart";
 import { Box, Paper, List, ListItem, TextField, Button, Typography, Dialog, DialogTitle, DialogContent, ListItemText, IconButton, Badge, Chip, Stack } from "@mui/material";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
@@ -15,7 +15,20 @@ export default function Chat() {
     const [openDialog, setOpenDialog] = useState(false);
     const [selectedInternalMessages, setSelectedInternalMessages] = useState([]);
     const [attachedImages, setAttachedImages] = useState([]);
+    const [sessionId, setSessionId] = useState("");
     const fileInputRef = useRef(null);
+
+    useEffect(() => {
+
+        const generateRandomNumber = () => {
+            return Math.floor(Math.random() * 10000000) + 1;
+        };
+
+        const newSessionId = generateRandomNumber();
+        
+        setSessionId(newSessionId);
+        console.log(`New session created with ID: ${newSessionId}`);
+    }, []);
 
     const sendMessage = () => {
         if (!input.trim() && attachedImages.length === 0) return;
@@ -29,7 +42,7 @@ export default function Chat() {
         // Create FormData with message and images
         const formData = new FormData();
         formData.append("message", input);
-        formData.append("session_id", "2")
+        formData.append("session_id", sessionId.toString());
         attachedImages.forEach((img, index) => {
             formData.append(`image${index + 1}`, img.file);
         });
